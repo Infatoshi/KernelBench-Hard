@@ -1,0 +1,26 @@
+name: 07_w4a16_gemm
+display_name: "W4A16 Weight-only Quantized GEMM"
+status: stub
+precision: int4_bf16
+regime: memory  # decode-dominant
+hardware: [RTX_PRO_6000]
+peak_tflops_key: bf16
+peak_bandwidth_key: dram
+
+# Dense-equivalent FLOPs
+flops_formula: "2 * M * N * K"
+# Bytes: x (bf16) + w_int4 (0.5 B/elem) + scales (bf16, K/group) + out (bf16)
+bytes_formula: "M*K*2 + (K/2)*N + (K/128)*N*2 + M*N*2"
+
+forbidden:
+  - "bitsandbytes.functional.dequantize"
+  - "torch.nn.functional.linear"
+
+sota:
+  name: "Marlin W4A16"
+  url: "https://github.com/IST-DASLab/marlin"
+  deps:
+    - "marlin-kernel"  # may need manual install
+
+num_correct_trials: 3
+num_perf_trials: 30

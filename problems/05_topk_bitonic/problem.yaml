@@ -1,0 +1,4 @@
+name: 05_topk_bitonic
+display_name: "TopK with Bitonic Sort"
+status: stub
+hardware: [RTX_PRO_6000]

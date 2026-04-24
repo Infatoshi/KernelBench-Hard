@@ -1,0 +1,4 @@
+name: 03_paged_attention
+display_name: "Paged Attention Decode"
+status: stub
+hardware: [RTX_PRO_6000]

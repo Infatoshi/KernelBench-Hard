@@ -1,0 +1,246 @@
+#!/bin/bash
+# Run one (harness, model, problem) combination.
+#
+# Usage:
+#   ./scripts/run_hard.sh <harness> <model> <problem_dir> [reasoning_effort]
+#
+# Examples:
+#   ./scripts/run_hard.sh claude claude-opus-4-7 problems/01_fp8_gemm
+#   ./scripts/run_hard.sh codex gpt-5.5 problems/01_fp8_gemm xhigh
+#   ./scripts/run_hard.sh kimi kimi-k2.6 problems/01_fp8_gemm
+#   ./scripts/run_hard.sh ccr-claude glm-5.1 problems/01_fp8_gemm
+#
+# Archives everything to outputs/runs/<ts>_<harness>_<model>_<problem>/.
+
+set -euo pipefail
+
+# Pin CUDA 13 — /usr/local/cuda may still point at 12.8.
+if [ -d /usr/local/cuda-13 ]; then
+    export CUDA_HOME=/usr/local/cuda-13
+    export PATH="$CUDA_HOME/bin:$PATH"
+fi
+
+# Source API keys if the user has an env_vars file.
+if [ -f "$HOME/.env_vars" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$HOME/.env_vars"
+    set +a
+fi
+
+HARNESS="${1:?Usage: $0 <harness> <model> <problem_dir> [reasoning_effort]}"
+MODEL="${2:?model required}"
+PROBLEM_DIR="${3:?problem_dir required}"
+REASONING_EFFORT="${4:-}"
+
+PROBLEM_DIR="$(cd "$PROBLEM_DIR" && pwd)"
+PROBLEM_NAME="$(basename "$PROBLEM_DIR")"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+MODEL_SLUG="$(echo "$MODEL" | tr '/:[] ' '_')"
+RUN_DIR="${REPO_ROOT}/outputs/runs/${TIMESTAMP}_${HARNESS}_${MODEL_SLUG}_${PROBLEM_NAME}"
+mkdir -p "$RUN_DIR"
+
+# Wall clock budget: 45 minutes per run.
+BUDGET_SECONDS=2700
+
+# --- Compose the system prompt for the agent under test -------------------
+#
+# Two layers:
+#   1. Global preamble (hardware, toolchain, "link don't spoil" policy)
+#   2. Per-problem AGENT.md (specific brief, URLs, shapes)
+#
+# Concatenated into SYSTEM_PROMPT.md inside the problem dir. This file is
+# gitignored. The agent sees it as part of its working tree.
+
+PREAMBLE_PATH="${REPO_ROOT}/src/harness/preamble.md"
+AGENT_MD="${PROBLEM_DIR}/AGENT.md"
+SYS_PROMPT="${PROBLEM_DIR}/SYSTEM_PROMPT.md"
+
+{
+    cat "$PREAMBLE_PATH"
+    echo
+    echo "---"
+    echo
+    cat "$AGENT_MD"
+} > "$SYS_PROMPT"
+
+# --- Clean the problem workspace of any prior solution --------------------
+TEMPLATE_FILES=(reference.py sota.py shapes.py problem.yaml check.py benchmark.py AGENT.md SYSTEM_PROMPT.md)
+is_template() {
+    local n="$1"
+    for t in "${TEMPLATE_FILES[@]}"; do
+        [[ "$n" == "$t" ]] && return 0
+    done
+    return 1
+}
+
+shopt -s nullglob dotglob
+for f in "$PROBLEM_DIR"/*; do
+    base="$(basename "$f")"
+    [[ "$base" == "." || "$base" == ".." ]] && continue
+    if ! is_template "$base"; then
+        rm -rf "$f"
+    fi
+done
+shopt -u nullglob dotglob
+
+# --- Run the harness ------------------------------------------------------
+
+PROMPT="Read SYSTEM_PROMPT.md first. It has hardware context and the problem brief. Then read reference.py, shapes.py, and problem.yaml. Write solution.py. Run check.py to verify correctness. Run benchmark.py to measure throughput. Iterate. Budget: 45 minutes wall clock."
+
+LOG_FILE="${RUN_DIR}/transcript.jsonl"
+STDERR_FILE="${RUN_DIR}/stderr.log"
+
+echo "========================================"
+echo "KERNELBENCH-HARD RUN"
+echo "========================================"
+echo "Harness:    $HARNESS"
+echo "Model:      $MODEL"
+echo "Effort:     ${REASONING_EFFORT:-<default>}"
+echo "Problem:    $PROBLEM_NAME"
+echo "Workspace:  $PROBLEM_DIR"
+echo "Archive:    $RUN_DIR"
+echo "Budget:     ${BUDGET_SECONDS}s"
+echo "========================================"
+
+START_TIME=$(date +%s)
+
+case "$HARNESS" in
+    claude)
+        timeout "$BUDGET_SECONDS" claude \
+            --dangerously-skip-permissions \
+            --print --verbose \
+            --output-format stream-json \
+            --model "$MODEL" \
+            --add-dir "$PROBLEM_DIR" \
+            -p "You are working in $PROBLEM_DIR. $PROMPT" \
+            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+        ;;
+
+    ccr-claude)
+        # Claude Code routed via ccr-rust to a non-Anthropic provider.
+        # Assumes ccr-rust is running locally and ANTHROPIC_BASE_URL points at it.
+        # Model name is the upstream lab's model ID (glm-5.1, deepseek-v4-flash, etc.).
+        timeout "$BUDGET_SECONDS" \
+            env ANTHROPIC_BASE_URL="${CCR_BASE_URL:-http://127.0.0.1:3456}" \
+            claude \
+                --dangerously-skip-permissions \
+                --print --verbose \
+                --output-format stream-json \
+                --model "$MODEL" \
+                --add-dir "$PROBLEM_DIR" \
+                -p "You are working in $PROBLEM_DIR. $PROMPT" \
+            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+        ;;
+
+    codex)
+        EFFORT_ARG=()
+        if [ -n "$REASONING_EFFORT" ]; then
+            EFFORT_ARG=(-c "model_reasoning_effort=\"$REASONING_EFFORT\"")
+        fi
+        timeout "$BUDGET_SECONDS" codex exec \
+            -m "$MODEL" \
+            "${EFFORT_ARG[@]}" \
+            --dangerously-bypass-approvals-and-sandbox \
+            --skip-git-repo-check \
+            -C "$PROBLEM_DIR" \
+            "$PROMPT" \
+            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+        ;;
+
+    kimi)
+        echo "$PROMPT" | timeout "$BUDGET_SECONDS" kimi \
+            -w "$PROBLEM_DIR" \
+            --print \
+            --output-format stream-json \
+            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+        ;;
+
+    *)
+        echo "Unknown harness: $HARNESS" >&2
+        echo "Supported: claude, ccr-claude, codex, kimi" >&2
+        exit 1
+        ;;
+esac
+
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+
+# --- Post-run: correctness + benchmark + archive --------------------------
+
+HAS_SOLUTION=false
+CORRECT=false
+SCORE="null"
+
+if [ -f "$PROBLEM_DIR/solution.py" ]; then
+    HAS_SOLUTION=true
+    CHECK_LOG="$RUN_DIR/check.log"
+    BENCH_LOG="$RUN_DIR/benchmark.log"
+
+    echo "Running check.py..."
+    (cd "$PROBLEM_DIR" && timeout 180 uv run python check.py) > "$CHECK_LOG" 2>&1 || true
+
+    if grep -q "^PASS" "$CHECK_LOG"; then
+        CORRECT=true
+        echo "Running benchmark.py..."
+        (cd "$PROBLEM_DIR" && timeout 600 uv run python benchmark.py) > "$BENCH_LOG" 2>&1 || true
+        SCORE=$(grep -oP 'peak_fraction:\s*\K[0-9.]+' "$BENCH_LOG" | head -1 || echo "null")
+    fi
+fi
+
+cat > "$RUN_DIR/result.json" <<JSON
+{
+    "problem": "$PROBLEM_NAME",
+    "harness": "$HARNESS",
+    "model": "$MODEL",
+    "reasoning_effort": "$REASONING_EFFORT",
+    "has_solution": $HAS_SOLUTION,
+    "correct": $CORRECT,
+    "peak_fraction": $SCORE,
+    "elapsed_seconds": $ELAPSED
+}
+JSON
+
+# Archive solution + any scratch
+if [ -f "$PROBLEM_DIR/solution.py" ]; then
+    cp "$PROBLEM_DIR/solution.py" "$RUN_DIR/solution.py"
+fi
+
+SCRATCH_DIR="$RUN_DIR/scratch"
+shopt -s nullglob dotglob
+for f in "$PROBLEM_DIR"/*; do
+    base="$(basename "$f")"
+    [[ "$base" == "." || "$base" == ".." ]] && continue
+    [[ "$base" == "solution.py" ]] && continue
+    if ! is_template "$base"; then
+        mkdir -p "$SCRATCH_DIR"
+        cp -r "$f" "$SCRATCH_DIR/"
+    fi
+done
+shopt -u nullglob dotglob
+
+# Clean the problem workspace for the next run
+shopt -s nullglob dotglob
+for f in "$PROBLEM_DIR"/*; do
+    base="$(basename "$f")"
+    [[ "$base" == "." || "$base" == ".." ]] && continue
+    if ! is_template "$base"; then
+        rm -rf "$f"
+    fi
+done
+rm -f "$PROBLEM_DIR/SYSTEM_PROMPT.md"
+shopt -u nullglob dotglob
+
+STATUS="ERR"
+if $CORRECT; then
+    STATUS="OK score=$SCORE"
+elif $HAS_SOLUTION; then
+    STATUS="FAIL (check failed)"
+fi
+
+echo "========================================"
+echo "[$STATUS] $PROBLEM_NAME (${ELAPSED}s)"
+echo "Archive: $RUN_DIR"
+echo "========================================"

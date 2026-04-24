@@ -1,0 +1,5 @@
+name: 02_kda_cutlass
+display_name: "Kimi Delta Attention via CUTLASS CuTe"
+status: stub
+hardware: [RTX_PRO_6000]
+# Remaining fields TBD.

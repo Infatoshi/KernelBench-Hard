@@ -1,0 +1,4 @@
+name: 04_kahan_softmax
+display_name: "Kahan-corrected Softmax"
+status: stub
+hardware: [RTX_PRO_6000]

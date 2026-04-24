@@ -1,0 +1,26 @@
+name: 06_sonic_moe_swiglu
+display_name: "Sonic-MoE up-projection (Grouped GEMM + SwiGLU)"
+status: stub  # shapes fixed; reference.py / sota.py / check.py / benchmark.py pending
+precision: bf16
+regime: compute
+hardware: [RTX_PRO_6000]
+peak_tflops_key: bf16
+peak_bandwidth_key: dram
+
+# Dense-equivalent FLOPs: 2*T*H*(2*I) for up-proj (gate+up both go through GEMM).
+# T = T_total across all experts; per-expert varlen shares the same total dense work.
+flops_formula: "2 * T_total * H * (2 * I)"
+bytes_formula: "T_total*H*2 + E*H*(2*I)*2 + T_total*(2*I)*2"
+
+forbidden:
+  - "torch.nn.functional.linear"
+  - "torch.matmul"
+
+sota:
+  name: "Sonic-MoE up-proj (Tri Dao)"
+  url: "https://github.com/Dao-AILab/sonic-moe"
+  deps:
+    - "sonic-moe>=0.1.0"  # may fail on SM120; reference-only in that case
+
+num_correct_trials: 3
+num_perf_trials: 20
