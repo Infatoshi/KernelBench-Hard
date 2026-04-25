@@ -52,15 +52,27 @@ header .meta b { color: #d8dee9; font-weight: 500; }
 .event[data-role="system"][data-subtype="task_started"] .role,
 .event[data-role="system"][data-subtype="task_notification"] .role { color: #6c89bf; }
 .subagent-block { margin-bottom: 16px; background: #131c2a; border: 1px solid #2a3548;
-    border-left: 3px solid #6c89bf; border-radius: 4px; padding: 0; }
-.subagent-block > summary { padding: 12px 14px; cursor: pointer; font-size: 13px;
-    color: #a3aab8; font-weight: 500; user-select: none; list-style: none; }
-.subagent-block > summary::-webkit-details-marker { display: none; }
-.subagent-block > summary::before { content: "▶ "; color: #6c89bf; display: inline-block;
-    margin-right: 6px; transition: transform 0.15s; }
-.subagent-block[open] > summary::before { content: "▼ "; }
-.subagent-block[open] > summary { border-bottom: 1px solid #2a3548; color: #d8dee9; }
-.subagent-inner { padding: 12px 14px 4px; }
+    border-left: 3px solid #6c89bf; border-radius: 6px; padding: 0; overflow: hidden; }
+.subagent-block > summary { padding: 14px 18px; cursor: pointer; font-size: 14px;
+    color: #a3aab8; font-weight: 500; user-select: none; list-style: none;
+    display: flex; align-items: center; gap: 12px; transition: background 0.15s; }
+.subagent-block > summary::-webkit-details-marker,
+.subagent-block > summary::marker { display: none; }
+.subagent-block > summary:hover { background: #182236; color: #d8dee9; }
+.subagent-block > summary::before {
+    content: "";
+    display: inline-block;
+    width: 0; height: 0;
+    border-left: 9px solid #6c89bf;
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    transition: transform 0.18s ease-out;
+    flex-shrink: 0;
+}
+.subagent-block[open] > summary::before { transform: rotate(90deg); }
+.subagent-block[open] > summary { border-bottom: 1px solid #2a3548; color: #d8dee9;
+    background: #182236; }
+.subagent-inner { padding: 14px 16px 6px; }
 .subagent-inner .event { background: #1a2233; border-left-style: dashed; }
 .collapsible { background: #1f242e; border: 1px solid #2c313a; border-radius: 4px;
                padding: 6px 10px; margin-top: 8px; cursor: pointer; user-select: none; }
@@ -351,7 +363,7 @@ def _render_timeline(events: list[Event]) -> str:
             inner_html = "\n".join(_render_event(ev, i + 1 + k) for k, ev in enumerate(inner))
             out.append(
                 f'<details class="subagent-block">'
-                f'<summary>↳ {summary}</summary>'
+                f'<summary><span>{summary}</span></summary>'
                 f'<div class="subagent-inner">{inner_html}</div>'
                 f'</details>'
             )
