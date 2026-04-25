@@ -26,6 +26,7 @@ def parse(path: Path) -> Session:
     final_text = None
     total = TokenUsage()
     files = FileTracker()
+    in_subagent = False  # True between task_started and task_notification
 
     with open(path) as f:
         for raw in f:
@@ -42,13 +43,14 @@ def parse(path: Path) -> Session:
                 model = obj.get("model") or model
                 session_id = obj.get("session_id") or obj.get("sessionId") or session_id
                 cwd = obj.get("cwd") or cwd
-                if obj.get("subtype") == "init":
+                sub = obj.get("subtype")
+                if sub == "init":
                     events.append(Event(
                         role="system",
                         text=f"session start  cwd={cwd}  model={model}  permissions={obj.get('permissionMode','?')}",
                         subtype="init", raw=obj,
                     ))
-                elif obj.get("subtype") == "compact_boundary":
+                elif sub == "compact_boundary":
                     summary = obj.get("message", {}).get("summary") or obj.get("summary") or ""
                     events.append(Event(
                         role="compaction",
@@ -56,9 +58,22 @@ def parse(path: Path) -> Session:
                         subtype="compact_boundary",
                         raw=obj,
                     ))
-                else:
-                    # other system events (file-history-snapshot etc.) — skip rendering by default
+                elif sub == "task_started":
+                    in_subagent = True
+                    events.append(Event(
+                        role="system", subtype="task_started",
+                        text="↳ subagent started", is_sidechain=True, raw=obj,
+                    ))
+                elif sub == "task_notification":
+                    events.append(Event(
+                        role="system", subtype="task_notification",
+                        text="↳ subagent complete", is_sidechain=True, raw=obj,
+                    ))
+                    in_subagent = False
+                elif sub == "task_progress":
+                    # Just a heartbeat between subagent turns; skip in default render.
                     pass
+                # other system events (file-history-snapshot etc.) — skip
                 continue
 
             if t == "user":
@@ -66,11 +81,12 @@ def parse(path: Path) -> Session:
                 content = msg.get("content")
                 # User content can be a string (initial prompt) or a list of blocks
                 # (tool_results sent back to the model on subsequent turns).
+                sidechain = bool(obj.get("isSidechain")) or in_subagent
                 if isinstance(content, str):
                     events.append(Event(
                         role="user", text=content,
                         timestamp=_parse_ts(obj.get("timestamp")),
-                        is_sidechain=bool(obj.get("isSidechain")),
+                        is_sidechain=sidechain,
                         parent_uuid=obj.get("parentUuid"),
                         raw=obj,
                     ))
@@ -92,10 +108,14 @@ def parse(path: Path) -> Session:
                                     is_error=bool(block.get("is_error")),
                                 ),
                                 timestamp=_parse_ts(obj.get("timestamp")),
+                                is_sidechain=sidechain,
                                 raw=obj,
                             ))
                         elif isinstance(block, dict) and block.get("type") == "text":
-                            events.append(Event(role="user", text=block.get("text", ""), raw=obj))
+                            events.append(Event(
+                                role="user", text=block.get("text", ""),
+                                is_sidechain=sidechain, raw=obj,
+                            ))
                 continue
 
             if t == "assistant":
@@ -166,7 +186,7 @@ def parse(path: Path) -> Session:
                     usage=usage,
                     model=model,
                     timestamp=_parse_ts(obj.get("timestamp")),
-                    is_sidechain=bool(obj.get("isSidechain")),
+                    is_sidechain=bool(obj.get("isSidechain")) or in_subagent,
                     parent_uuid=obj.get("parentUuid"),
                     raw=obj,
                 ))

@@ -39,6 +39,15 @@ header .meta b { color: #d8dee9; font-weight: 500; }
 .event[data-role="error"] .role { color: #ef4444; }
 .event[data-role="compaction"] { border-left-color: #c084fc; background: #221a2e; }
 .event[data-role="compaction"] .role { color: #c084fc; }
+.event[data-sidechain="1"] { margin-left: 32px; background: #131722; border-left-style: dashed; }
+.event[data-sidechain="1"]::before { content: "subagent"; position: absolute; margin-left: -42px;
+    margin-top: 2px; font-size: 10px; color: #6c89bf; letter-spacing: 0.05em; }
+.event[data-sidechain="1"] { position: relative; }
+.event[data-role="system"][data-subtype="task_started"],
+.event[data-role="system"][data-subtype="task_notification"] {
+    background: #131c2a; border-left-color: #6c89bf; }
+.event[data-role="system"][data-subtype="task_started"] .role,
+.event[data-role="system"][data-subtype="task_notification"] .role { color: #6c89bf; }
 .collapsible { background: #1f242e; border: 1px solid #2c313a; border-radius: 4px;
                padding: 6px 10px; margin-top: 8px; cursor: pointer; user-select: none; }
 .collapsible summary { font-size: 12px; color: #a3aab8; outline: none; }
@@ -115,7 +124,9 @@ def _render_code(code: str, lang: str = "python") -> str:
 def _render_event(e: Event, idx: int) -> str:
     role = e.role
     parts: list[str] = []
-    parts.append(f'<div class="event" data-role="{role}" id="e{idx}">')
+    sub_attr = f' data-subtype="{e.subtype}"' if e.subtype else ""
+    side_attr = ' data-sidechain="1"' if e.is_sidechain else ""
+    parts.append(f'<div class="event" data-role="{role}"{sub_attr}{side_attr} id="e{idx}">')
     parts.append(f'<div class="role">{role}{f" — {e.subtype}" if e.subtype else ""}</div>')
 
     if e.text:
