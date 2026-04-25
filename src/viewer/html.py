@@ -121,6 +121,41 @@ def _render_code(code: str, lang: str = "python") -> str:
     return f'<pre><code class="language-{lang}">{_esc(code)}</code></pre>'
 
 
+def _maybe_pretty_json(s: str) -> str:
+    """If s is a JSON object/array, return a flattened version where every
+    string value with embedded newlines is materialized with real line breaks
+    (one field per line, indented). Falls back to the raw string otherwise.
+    """
+    s = s.lstrip()
+    if not s or s[0] not in "{[":
+        return s
+    try:
+        obj = json.loads(s)
+    except (json.JSONDecodeError, ValueError):
+        return s
+    return _flatten_for_display(obj)
+
+
+def _flatten_for_display(obj, indent: int = 0) -> str:
+    pad = "  " * indent
+    if isinstance(obj, dict):
+        lines = []
+        for k, v in obj.items():
+            if isinstance(v, str) and "\n" in v:
+                lines.append(f'{pad}{k}:')
+                for ln in v.splitlines():
+                    lines.append(f'{pad}  {ln}')
+            elif isinstance(v, (dict, list)):
+                lines.append(f'{pad}{k}:')
+                lines.append(_flatten_for_display(v, indent + 1))
+            else:
+                lines.append(f'{pad}{k}: {v!r}' if isinstance(v, str) else f'{pad}{k}: {v}')
+        return "\n".join(lines)
+    if isinstance(obj, list):
+        return "\n".join(_flatten_for_display(x, indent) for x in obj)
+    return f'{pad}{obj}'
+
+
 # Argument keys that often hold whole files / large multiline blobs.
 # When a diff is already shown, strip these from the JSON view entirely;
 # otherwise hoist them out into their own code blocks so newlines render
@@ -228,6 +263,10 @@ def _render_event(e: Event, idx: int) -> str:
 
     if e.tool_result:
         content = e.tool_result.content or ""
+        # If the tool output is itself a JSON object (common in Codex
+        # apply_patch / function_call_output), pretty-print it so embedded
+        # newlines aren't shown as literal \n.
+        content = _maybe_pretty_json(content)
         snippet, truncated = _truncate(content, 1500)
         kind = "stderr" if e.tool_result.is_error else "stdout"
         parts.append(
