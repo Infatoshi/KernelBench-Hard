@@ -121,6 +121,74 @@ def _render_code(code: str, lang: str = "python") -> str:
     return f'<pre><code class="language-{lang}">{_esc(code)}</code></pre>'
 
 
+# Argument keys that often hold whole files / large multiline blobs.
+# When a diff is already shown, strip these from the JSON view entirely;
+# otherwise hoist them out into their own code blocks so newlines render
+# as real line breaks instead of literal "\n".
+_HEAVY_ARG_KEYS = {
+    "content", "streamContent", "new_string", "old_string",
+    "file_text", "patch", "input",
+}
+
+
+def _guess_lang(key: str, file_path: str | None, value: str) -> str:
+    p = (file_path or "").lower()
+    if p.endswith((".py",)):
+        return "python"
+    if p.endswith((".cu", ".cuh", ".cpp", ".h", ".hpp", ".cc")):
+        return "cpp"
+    if p.endswith((".js", ".ts", ".tsx", ".jsx")):
+        return "javascript"
+    if p.endswith((".sh", ".bash")):
+        return "bash"
+    if p.endswith((".md",)):
+        return "markdown"
+    if p.endswith((".json",)):
+        return "json"
+    if p.endswith((".yaml", ".yml")):
+        return "yaml"
+    if "diff" in key.lower() or "patch" in key.lower():
+        return "diff"
+    return "text"
+
+
+def _render_args(args: dict, has_diff: bool) -> str:
+    if not isinstance(args, dict) or not args:
+        return ""
+
+    extras: list[tuple[str, str, str]] = []  # (key, value, lang)
+    cleaned: dict = {}
+    file_path = args.get("file_path") or args.get("path") or args.get("filepath")
+
+    for k, v in args.items():
+        if isinstance(v, str) and "\n" in v:
+            if has_diff and k in _HEAVY_ARG_KEYS:
+                cleaned[k] = f"<{len(v)} chars — see diff>"
+            else:
+                extras.append((k, v, _guess_lang(k, file_path, v)))
+                cleaned[k] = f"<{len(v)} chars — see below>"
+        else:
+            cleaned[k] = v
+
+    out = []
+    args_pretty = json.dumps(cleaned, indent=2, default=str)
+    args_snippet, _ = _truncate(args_pretty, 600)
+    out.append(
+        f'<details class="collapsible"><summary>args</summary>'
+        f'<div class="inner">{_render_code(args_snippet, "json")}</div></details>'
+    )
+    for key, value, lang in extras:
+        snippet, truncated = _truncate(value, 4000)
+        label = f"{key} ({len(value)} chars"
+        label += " — TRUNCATED" if truncated else ""
+        label += ")"
+        out.append(
+            f'<details class="collapsible" open><summary>{_esc(label)}</summary>'
+            f'<div class="inner">{_render_code(snippet, lang)}</div></details>'
+        )
+    return "".join(out)
+
+
 def _render_event(e: Event, idx: int) -> str:
     role = e.role
     parts: list[str] = []
@@ -140,8 +208,6 @@ def _render_event(e: Event, idx: int) -> str:
         )
 
     for tc in e.tool_calls:
-        args_pretty = json.dumps(tc.args, indent=2, default=str)
-        args_snippet, _ = _truncate(args_pretty, 600)
         parts.append('<div class="tool-call">')
         name_label = _esc(tc.name)
         if tc.file_path:
@@ -157,10 +223,7 @@ def _render_event(e: Event, idx: int) -> str:
                 f'<summary>{_esc(label)}</summary>'
                 f'<div class="inner">{_render_code(diff_snippet, "diff")}</div></details>'
             )
-        parts.append(
-            f'<details class="collapsible"><summary>args</summary>'
-            f'<div class="inner">{_render_code(args_snippet, "json")}</div></details>'
-        )
+        parts.append(_render_args(tc.args, has_diff=bool(tc.diff)))
         parts.append('</div>')
 
     if e.tool_result:
