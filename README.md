@@ -31,7 +31,7 @@ One harness per model, each pinned to the highest-fidelity native endpoint.
 | Model | Harness | Route |
 |-------|---------|-------|
 | Claude Opus 4.7 | `claude` | Anthropic direct |
-| GPT-5.4 xhigh | `codex` (`-c model_reasoning_effort="xhigh"`) | OpenAI direct |
+| GPT-5.5 xhigh | `codex` (`-c model_reasoning_effort="xhigh"`) | OpenAI direct |
 | Kimi K2.6 | `kimi` | Moonshot direct (api.moonshot.cn) |
 | GLM-5.1 | `claude` + [ccr-rust](https://github.com/RESMP-DEV/ccr-rust) | Z.AI direct (api.z.ai) |
 | Minimax M2.7 | `claude` + ccr-rust | Minimax direct (api.minimaxi.com) |
@@ -40,7 +40,7 @@ One harness per model, each pinned to the highest-fidelity native endpoint.
 
 7 models × 7 problems = **49 agent-runs per sweep** (~37 GPU-hours at 45min/run).
 
-> **Codex / GPT-5.5 note.** The locally-built `codex` binary at `~/codex/codex-rs/target/release/codex` was compiled when source was at version `0.118.0`. The OpenAI API gates `gpt-5.5` to clients newer than that and returns `400 invalid_request_error` from `codex exec`. The interactive `codex` REPL works fine, but the harness is non-interactive. We pin codex to `gpt-5.4 xhigh` (the latest model the current build accepts via `exec`) until the binary is rebuilt from current source. Rebuild takes ~1 hour on this machine, so it's deferred.
+> **Codex binary note.** The harness uses the npm-distributed `@openai/codex` (currently `0.125.0`) installed at `~/.local/node-*/bin/codex`. The shell has `codex` aliased to a locally-built rust binary, but aliases don't expand inside non-interactive scripts, so the harness picks up the npm version automatically via PATH. To upgrade in the future: `npm install -g @openai/codex`.
 
 ## Deferred / upcoming
 
