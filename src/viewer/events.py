@@ -17,6 +17,11 @@ class ToolCall:
     name: str
     args: dict[str, Any]
     call_id: str | None = None
+    # If this tool call is a file write/edit, a unified-diff string showing
+    # the change. None for non-file-write tools.
+    diff: str | None = None
+    # Path of the file being written/edited, if applicable.
+    file_path: str | None = None
 
 
 @dataclass

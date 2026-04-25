@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from src.viewer.diff_util import FileTracker
 from src.viewer.events import Event, Session, TokenUsage, ToolCall, ToolResult
 
 
 def parse(path: Path) -> Session:
     events: list[Event] = []
     total = TokenUsage()
+    files = FileTracker()
 
     with open(path) as f:
         for raw in f:
@@ -59,10 +61,23 @@ def parse(path: Path) -> Session:
                         args = json.loads(args_raw) if isinstance(args_raw, str) else (args_raw or {})
                     except json.JSONDecodeError:
                         args = {"raw": args_raw}
+                    tname = fn.get("name", "?")
+                    targs = args if isinstance(args, dict) else {"raw": args}
+                    diff = None
+                    file_path = None
+                    if isinstance(targs, dict):
+                        file_path = targs.get("path") or targs.get("file_path")
+                        if tname in {"WriteFile", "CreateFile"} and file_path:
+                            diff = files.diff_for_write(file_path, targs.get("content", "") or "")
+                        elif tname in {"EditFile", "Edit"} and file_path:
+                            diff = files.diff_for_edit(
+                                file_path,
+                                targs.get("old_string", "") or "",
+                                targs.get("new_string", "") or "",
+                            )
                     tool_calls.append(ToolCall(
-                        name=fn.get("name", "?"),
-                        args=args if isinstance(args, dict) else {"raw": args},
-                        call_id=tc.get("id"),
+                        name=tname, args=targs, call_id=tc.get("id"),
+                        diff=diff or None, file_path=file_path,
                     ))
 
                 events.append(Event(

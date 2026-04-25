@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.viewer.diff_util import FileTracker
 from src.viewer.events import Event, Session, TokenUsage, ToolCall, ToolResult
 
 
@@ -42,6 +43,7 @@ def parse(path: Path) -> Session:
     final_text = None
     total = TokenUsage()
     duration_ms = None
+    files = FileTracker()
 
     with open(path) as f:
         for raw in f:
@@ -86,9 +88,20 @@ def parse(path: Path) -> Session:
                 ts = _ms_to_dt(obj.get("timestamp_ms"))
 
                 if subtype == "started":
+                    diff = None
+                    file_path = args.get("path") if isinstance(args, dict) else None
+                    # Cursor's edit/write tools both carry full new content in
+                    # `streamContent`. createToolCall similar.
+                    if name in {"edit", "write", "create"} and file_path:
+                        new_content = args.get("streamContent") or args.get("content") or ""
+                        diff = files.diff_for_write(file_path, new_content)
+                    tool_calls = [ToolCall(
+                        name=name, args=args, call_id=obj.get("call_id"),
+                        diff=diff or None, file_path=file_path,
+                    )]
                     events.append(Event(
                         role="assistant",
-                        tool_calls=[ToolCall(name=name, args=args, call_id=obj.get("call_id"))],
+                        tool_calls=tool_calls,
                         timestamp=ts, raw=obj, model=model,
                     ))
                 elif subtype == "completed" and result is not None:

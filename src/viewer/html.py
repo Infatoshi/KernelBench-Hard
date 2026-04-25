@@ -50,6 +50,13 @@ header .meta b { color: #d8dee9; font-weight: 500; }
                    color: #fbbf24; font-weight: 600; }
 .tool-call .args { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: 12px;
                    color: #8c95a8; margin-left: 8px; }
+.tool-call .filepath { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+                       font-size: 11px; color: #8c95a8; margin-left: 8px; font-weight: 400; }
+.diff-block { border-color: #2a3548; }
+.diff-block summary { color: #6c89bf; }
+.diff-block .inner pre { background: #0e1218; }
+.token .deleted, .token.deleted, .language-diff .deleted { color: #fb7185; }
+.token .inserted, .token.inserted, .language-diff .inserted { color: #4ade80; }
 .usage { display: inline-block; font-family: ui-monospace, monospace; font-size: 11px;
          color: #6c7689; margin-right: 12px; }
 .usage b { color: #a3aab8; font-weight: 500; }
@@ -123,9 +130,22 @@ def _render_event(e: Event, idx: int) -> str:
 
     for tc in e.tool_calls:
         args_pretty = json.dumps(tc.args, indent=2, default=str)
-        args_snippet, truncated = _truncate(args_pretty, 600)
+        args_snippet, _ = _truncate(args_pretty, 600)
         parts.append('<div class="tool-call">')
-        parts.append(f'<span class="name">{_esc(tc.name)}</span>')
+        name_label = _esc(tc.name)
+        if tc.file_path:
+            name_label += f' <span class="filepath">{_esc(tc.file_path)}</span>'
+        parts.append(f'<span class="name">{name_label}</span>')
+        if tc.diff:
+            diff_snippet, diff_truncated = _truncate(tc.diff, 6000)
+            label = f"diff ({tc.diff.count(chr(10))} lines"
+            label += " — TRUNCATED" if diff_truncated else ""
+            label += ")"
+            parts.append(
+                f'<details class="collapsible diff-block" open>'
+                f'<summary>{_esc(label)}</summary>'
+                f'<div class="inner">{_render_code(diff_snippet, "diff")}</div></details>'
+            )
         parts.append(
             f'<details class="collapsible"><summary>args</summary>'
             f'<div class="inner">{_render_code(args_snippet, "json")}</div></details>'

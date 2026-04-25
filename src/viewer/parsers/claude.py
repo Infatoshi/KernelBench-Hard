@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.viewer.diff_util import FileTracker
 from src.viewer.events import Event, Session, TokenUsage, ToolCall, ToolResult
 
 
@@ -24,6 +25,7 @@ def parse(path: Path) -> Session:
     cwd = None
     final_text = None
     total = TokenUsage()
+    files = FileTracker()
 
     with open(path) as f:
         for raw in f:
@@ -113,10 +115,35 @@ def parse(path: Path) -> Session:
                         elif bt in {"thinking", "reasoning"}:
                             reasoning_parts.append(block.get("thinking") or block.get("text") or "")
                         elif bt == "tool_use":
+                            name = block.get("name", "?")
+                            args = block.get("input") or {}
+                            diff = None
+                            file_path = args.get("file_path") if isinstance(args, dict) else None
+                            if name == "Write" and file_path:
+                                diff = files.diff_for_write(file_path, args.get("content", "") or "")
+                            elif name == "Edit" and file_path:
+                                diff = files.diff_for_edit(
+                                    file_path,
+                                    args.get("old_string", "") or "",
+                                    args.get("new_string", "") or "",
+                                )
+                            elif name == "MultiEdit" and file_path:
+                                diff_chunks = []
+                                for ed in args.get("edits") or []:
+                                    if isinstance(ed, dict):
+                                        d = files.diff_for_edit(
+                                            file_path,
+                                            ed.get("old_string", "") or "",
+                                            ed.get("new_string", "") or "",
+                                        )
+                                        if d:
+                                            diff_chunks.append(d)
+                                diff = "\n".join(diff_chunks) if diff_chunks else None
                             tool_calls.append(ToolCall(
-                                name=block.get("name", "?"),
-                                args=block.get("input") or {},
+                                name=name, args=args if isinstance(args, dict) else {},
                                 call_id=block.get("id"),
+                                diff=diff or None,
+                                file_path=file_path,
                             ))
 
                 usage_obj = msg.get("usage") or {}

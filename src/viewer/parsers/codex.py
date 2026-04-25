@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from src.viewer.diff_util import FileTracker, make_diff, parse_codex_apply_patch
 from src.viewer.events import Event, Session, TokenUsage, ToolCall, ToolResult
 
 
@@ -30,6 +31,7 @@ def parse(path: Path) -> Session:
     cwd = None
     final_text = None
     total = TokenUsage()
+    files = FileTracker()
 
     if path.suffix == ".txt":
         text = path.read_text()
@@ -156,14 +158,30 @@ def parse(path: Path) -> Session:
                         timestamp=ts, raw=obj,
                     ))
                 elif pt in {"custom_tool_call", "custom_tool_call_output"}:
-                    # Same shape as function_call/output for our purposes
                     if pt == "custom_tool_call":
+                        cname = payload.get("name") or "custom_tool"
+                        cinput = payload.get("input") or ""
+                        diff = None
+                        file_path = None
+                        if cname == "apply_patch" and isinstance(cinput, str):
+                            # Parse codex's patch envelope into per-file old/new pairs.
+                            entries = parse_codex_apply_patch(cinput)
+                            chunks = []
+                            for fpath, (old, new) in entries.items():
+                                # Use any prior tracked content if Add was applied earlier.
+                                tracked = files.get(fpath) or old
+                                chunks.append(make_diff(fpath, tracked, new))
+                                files.write(fpath, new)
+                            diff = "\n".join(c for c in chunks if c) or None
+                            file_path = ", ".join(entries.keys()) if entries else None
                         events.append(Event(
                             role="assistant",
                             tool_calls=[ToolCall(
-                                name=payload.get("name") or "custom_tool",
-                                args={"raw": payload.get("input")},
+                                name=cname,
+                                args={"raw": cinput},
                                 call_id=payload.get("call_id"),
+                                diff=diff,
+                                file_path=file_path,
                             )],
                             timestamp=ts, raw=obj, model=model,
                         ))
