@@ -15,7 +15,10 @@ cd "$REPO_ROOT"
 # Empty reasoning_effort = use default.
 declare -a ACTIVE_MATRIX=(
     "claude claude-opus-4-7 "
-    "codex gpt-5.5 xhigh"
+    # NOTE: pinned to gpt-5.4 because the local codex binary is built at
+    # v0.118.0 and OpenAI gates gpt-5.5 to newer client versions. Bump to
+    # 5.5 after rebuilding ~/codex/codex-rs.
+    "codex gpt-5.4 xhigh"
     "kimi kimi-k2.6 "
     "ccr-claude glm-5.1 "
     "ccr-claude minimax-m2.7 "
