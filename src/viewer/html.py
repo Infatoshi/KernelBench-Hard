@@ -39,15 +39,29 @@ header .meta b { color: #d8dee9; font-weight: 500; }
 .event[data-role="error"] .role { color: #ef4444; }
 .event[data-role="compaction"] { border-left-color: #c084fc; background: #221a2e; }
 .event[data-role="compaction"] .role { color: #c084fc; }
-.event[data-sidechain="1"] { margin-left: 32px; background: #131722; border-left-style: dashed; }
-.event[data-sidechain="1"]::before { content: "subagent"; position: absolute; margin-left: -42px;
+/* Sidechain styling outside a subagent dropdown (e.g. true Claude Code
+   isSidechain events not framed by task_started/task_notification). */
+.event[data-sidechain="1"]:not(.subagent-inner .event) {
+    margin-left: 32px; background: #131722; border-left-style: dashed; position: relative; }
+.event[data-sidechain="1"]:not(.subagent-inner .event)::before {
+    content: "subagent"; position: absolute; margin-left: -42px;
     margin-top: 2px; font-size: 10px; color: #6c89bf; letter-spacing: 0.05em; }
-.event[data-sidechain="1"] { position: relative; }
 .event[data-role="system"][data-subtype="task_started"],
 .event[data-role="system"][data-subtype="task_notification"] {
     background: #131c2a; border-left-color: #6c89bf; }
 .event[data-role="system"][data-subtype="task_started"] .role,
 .event[data-role="system"][data-subtype="task_notification"] .role { color: #6c89bf; }
+.subagent-block { margin-bottom: 16px; background: #131c2a; border: 1px solid #2a3548;
+    border-left: 3px solid #6c89bf; border-radius: 4px; padding: 0; }
+.subagent-block > summary { padding: 12px 14px; cursor: pointer; font-size: 13px;
+    color: #a3aab8; font-weight: 500; user-select: none; list-style: none; }
+.subagent-block > summary::-webkit-details-marker { display: none; }
+.subagent-block > summary::before { content: "▶ "; color: #6c89bf; display: inline-block;
+    margin-right: 6px; transition: transform 0.15s; }
+.subagent-block[open] > summary::before { content: "▼ "; }
+.subagent-block[open] > summary { border-bottom: 1px solid #2a3548; color: #d8dee9; }
+.subagent-inner { padding: 12px 14px 4px; }
+.subagent-inner .event { background: #1a2233; border-left-style: dashed; }
 .collapsible { background: #1f242e; border: 1px solid #2c313a; border-radius: 4px;
                padding: 6px 10px; margin-top: 8px; cursor: pointer; user-select: none; }
 .collapsible summary { font-size: 12px; color: #a3aab8; outline: none; }
@@ -291,6 +305,64 @@ def _render_event(e: Event, idx: int) -> str:
     return "\n".join(parts)
 
 
+def _render_timeline(events: list[Event]) -> str:
+    """Render the event list, wrapping subagent ranges in a collapsed dropdown.
+
+    A subagent range starts at a system event with subtype=task_started and
+    ends at task_notification. The boundary events themselves become part of
+    the dropdown summary, not rendered as separate events.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(events)
+    while i < n:
+        e = events[i]
+        if e.role == "system" and e.subtype == "task_started":
+            # Find the matching task_notification.
+            j = i + 1
+            while j < n and not (
+                events[j].role == "system" and events[j].subtype == "task_notification"
+            ):
+                j += 1
+            inner = events[i + 1 : j]  # exclude both boundary events
+            # Pull subagent metadata from the preceding Agent tool call (if any)
+            subagent_type = None
+            agent_prompt = None
+            for k in range(i - 1, max(-1, i - 4), -1):
+                for tc in events[k].tool_calls:
+                    if tc.name in {"Agent", "Task"}:
+                        subagent_type = (tc.args or {}).get("subagent_type")
+                        agent_prompt = (tc.args or {}).get("description") or (tc.args or {}).get("prompt", "")
+                        if isinstance(agent_prompt, str):
+                            agent_prompt = agent_prompt[:80]
+                        break
+                if subagent_type:
+                    break
+
+            tool_count = sum(len(ev.tool_calls) for ev in inner)
+            label_parts = ["subagent"]
+            if subagent_type:
+                label_parts.append(_esc(subagent_type))
+            label_parts.append(f"{len(inner)} events · {tool_count} tools")
+            if agent_prompt:
+                label_parts.append(_esc(agent_prompt))
+            summary = " · ".join(label_parts)
+
+            inner_html = "\n".join(_render_event(ev, i + 1 + k) for k, ev in enumerate(inner))
+            out.append(
+                f'<details class="subagent-block">'
+                f'<summary>↳ {summary}</summary>'
+                f'<div class="subagent-inner">{inner_html}</div>'
+                f'</details>'
+            )
+            i = j + 1  # skip past task_notification
+            continue
+
+        out.append(_render_event(e, i))
+        i += 1
+    return "\n".join(out)
+
+
 def _read_artifact(run_dir: Path, name: str) -> str | None:
     p = run_dir / name
     if p.exists() and p.is_file():
@@ -334,7 +406,7 @@ def render(run_dir: Path, session: Session, out_path: Path | None = None) -> Pat
         for k, v in summary
     ) + '</div>'
 
-    events_html = "\n".join(_render_event(e, i) for i, e in enumerate(session.events))
+    events_html = _render_timeline(session.events)
 
     tabs: list[tuple[str, str, str]] = []  # (id, label, html)
     if solution:
