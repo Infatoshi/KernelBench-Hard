@@ -64,6 +64,93 @@ uv sync
 uv run python scripts/roofline_plot.py outputs/runs/<run_dir>
 ```
 
+## Viewing transcripts in a browser
+
+Each run produces a `transcript.jsonl` (or `codex_session.jsonl` for Codex). The viewer renders one of these as a self-contained HTML page with collapsible reasoning, tool calls, unified diffs for file writes, syntax-highlighted artifacts, and (for Claude Code) collapsed subagent dropdowns.
+
+### Generate the HTML
+
+```bash
+# Auto-detects the harness format
+uv run python -m src.viewer outputs/runs/<run_dir>
+
+# Specify a transcript file explicitly
+uv run python -m src.viewer outputs/runs/<run_dir> --transcript codex_session.jsonl
+
+# Open in a local browser (works only if you're on the GPU box itself)
+uv run python -m src.viewer outputs/runs/<run_dir> --open
+```
+
+Output: `outputs/runs/<run_dir>/index.html` — a single self-contained file (CSS embedded, Prism.js loaded from CDN for syntax highlighting).
+
+### Viewing remotely from a Mac (recommended)
+
+The GPU machine is headless; view the generated HTML over an SSH tunnel from your laptop.
+
+**Step 1 — On the GPU server**, start a static HTTP server pointed at the runs directory:
+
+```bash
+./scripts/serve.sh outputs/runs 8000
+# or for a specific subdir:
+./scripts/serve.sh outputs/runs/20260424_193033_claude_claude-opus-4-7_01_fp8_gemm 8000
+```
+
+The script wraps `python3 -m http.server` and prints the URL.
+
+**Step 2 — On your Mac**, open a separate terminal and forward the port:
+
+```bash
+ssh -N -L 8000:localhost:8000 anvil
+```
+
+Replace `anvil` with whatever SSH alias points at the GPU box. The `-N` flag makes ssh do nothing but hold the tunnel open.
+
+**Step 3 — Open the browser on Mac:**
+
+```
+http://localhost:8000
+```
+
+You'll see a directory listing if you served `outputs/runs/`. Click any run folder to load its `index.html`. To stop, Ctrl-C the ssh process on Mac (closes the tunnel) and Ctrl-C the http.server on Linux.
+
+### Port collisions
+
+If port 8000 is taken, pick another:
+
+```bash
+# server
+./scripts/serve.sh outputs/runs 9123
+# mac
+ssh -N -L 9123:localhost:9123 anvil
+# browser: http://localhost:9123
+```
+
+### Persistent serving (multiple runs over time)
+
+For long-running viewing across many sweeps, run the server in the background with `nohup`:
+
+```bash
+nohup ./scripts/serve.sh outputs/runs 8000 > /tmp/viewer.log 2>&1 &
+```
+
+Then keep an SSH tunnel up on Mac as needed. New runs in `outputs/runs/` appear immediately — refresh the directory listing in your browser.
+
+### What the page shows
+
+For each run, the HTML includes:
+
+- **Header**: harness, model, session id, working directory
+- **Summary cards**: turn count, tool call count, total events, input/output/cache tokens, elapsed time
+- **Tab bar** (auto-shown when artifacts exist): `solution.py` (syntax-highlighted), `final answer`, `benchmark.log`, `check.log`, `result.json`
+- **Timeline**: every event in chronological order
+  - User / assistant / tool / system events, color-coded
+  - Reasoning blocks collapsed by default (click to expand)
+  - Tool calls show file path next to the tool name; if it's a file write/edit, an inline unified diff with `+`/`-` colored highlighting opens by default
+  - Tool args block strips out long content fields when a diff is already shown
+  - Tool results pretty-printed, with JSON-encoded outputs flattened so embedded newlines render as line breaks
+  - Per-turn token usage badges
+- **Subagents** (Claude Code Agent tool): the entire subagent run collapses into a single dropdown summarizing `subagent_type · N events · M tools · prompt-preview`. Click to expand and see the nested timeline.
+
 ## Design principles
 
 See [SPEC.md](./SPEC.md). The short version:
