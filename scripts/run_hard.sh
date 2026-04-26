@@ -148,6 +148,23 @@ case "$HARNESS" in
             -C "$PROBLEM_DIR" \
             "$PROMPT" \
             > "$LOG_FILE" 2> "$STDERR_FILE" || true
+
+        # Codex writes its rich session JSONL to ~/.codex/sessions/YYYY/MM/DD/
+        # (local date). Locate by session_id printed to stderr — DO NOT pick the
+        # most-recently-modified file, since codex 0.125.0 touches old session
+        # files when scanning its thread state DB and that's misleading.
+        CODEX_SID=$(grep -oP 'session id: \K[0-9a-f-]+' "$STDERR_FILE" | head -1)
+        if [ -n "$CODEX_SID" ]; then
+            CODEX_SESS=$(find "$HOME/.codex/sessions" -name "*${CODEX_SID}*.jsonl" 2>/dev/null | head -1)
+            if [ -n "$CODEX_SESS" ]; then
+                cp "$CODEX_SESS" "$RUN_DIR/codex_session.jsonl"
+                echo "archived codex session: $CODEX_SESS -> $RUN_DIR/codex_session.jsonl"
+            else
+                echo "WARN: codex session_id $CODEX_SID found in stderr but no matching JSONL on disk"
+            fi
+        else
+            echo "WARN: could not parse codex session_id from stderr"
+        fi
         ;;
 
     kimi)
