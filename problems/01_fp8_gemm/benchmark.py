@@ -7,7 +7,6 @@ Output lines the harness picks up:
   shape=<idx> variant=<name> tflops=<N> gbps=<N> ms=<N>
   peak_fraction: <N>  (geomean over shapes of solution's peak_fraction)
 """
-import statistics
 import sys
 from math import exp, log
 from pathlib import Path
@@ -19,25 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.eval.roofline import compute_gbps, compute_tflops, peak_fraction  # noqa: E402
+from src.eval.timing import time_fn  # noqa: E402
 from src.hardware import get as get_hw  # noqa: E402
-
-
-def _time(fn, inputs, iters=30, warmup=5):
-    for _ in range(warmup):
-        with torch.no_grad():
-            fn(*inputs)
-    torch.cuda.synchronize()
-    times = []
-    for _ in range(iters):
-        s = torch.cuda.Event(enable_timing=True)
-        e = torch.cuda.Event(enable_timing=True)
-        s.record()
-        with torch.no_grad():
-            fn(*inputs)
-        e.record()
-        torch.cuda.synchronize()
-        times.append(s.elapsed_time(e))
-    return statistics.median(times)
 
 
 def _eval_formula(expr: str, vars: dict) -> float:
@@ -92,12 +74,12 @@ def main():
         bytes_moved = _eval_formula(bytes_formula, shape)
 
         # Eager
-        ms_eager = _time(ref_model, inputs, iters=num_perf_trials)
+        ms_eager = time_fn(ref_model, inputs, iters=num_perf_trials)
 
         # Compiled (best-effort)
         try:
             comp = torch.compile(ref_model, mode="reduce-overhead")
-            ms_comp = _time(comp, inputs, iters=num_perf_trials)
+            ms_comp = time_fn(comp, inputs, iters=num_perf_trials)
         except Exception as e:
             print(f"  [compile fallback] {type(e).__name__}: {e}")
             ms_comp = None
@@ -108,12 +90,12 @@ def main():
             try:
                 def sota_fn(x, _w=ref_model.weight):
                     return sota_mod.sota_forward(x, _w)
-                ms_sota = _time(sota_fn, inputs, iters=num_perf_trials)
+                ms_sota = time_fn(sota_fn, inputs, iters=num_perf_trials)
             except Exception as e:
                 print(f"  [sota unavailable] {type(e).__name__}: {e}")
 
         # Solution
-        ms_sol = _time(sol_model, inputs, iters=num_perf_trials)
+        ms_sol = time_fn(sol_model, inputs, iters=num_perf_trials)
 
         for variant, ms in [
             ("eager", ms_eager),
