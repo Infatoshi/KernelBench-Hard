@@ -15,7 +15,7 @@ Sibling project to [KernelBench-v3](https://github.com/Infatoshi/KernelBench-v3)
 | 05 | TopK with bitonic sort | RTX PRO 6000 | Small-output, comparator networks |
 | 06 | Sonic-MoE up-projection: grouped GEMM + fused SwiGLU | RTX PRO 6000 | Megakernel, load balancing, variable-length |
 | 07 | W4A16 weight-only GEMM (AWQ/GPTQ-style) | RTX PRO 6000 | Bit unpack, quantization, memory-bound decode |
-| 08 | Lightning Attention step (decode) | M4 Max | Metal kernel, novel attention on Apple |
+| ~~08~~ | ~~Lightning Attention step (decode) — M4 Max, Metal~~ | _deferred_ | _M4 Max track is on the TODO list, not prioritized for the first sweep_ |
 
 ## Hardware
 

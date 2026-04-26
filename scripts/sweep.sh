@@ -23,7 +23,9 @@ declare -a ACTIVE_MATRIX=(
     "ccr-claude deepseek-v4-flash "
 )
 
-# All CUDA problems. Metal (08) runs separately from the macbook.
+# NVIDIA GPU sweep. Metal problem 08 is deferred (M4 Max track not prioritized
+# for the first sweep). Order is outer=problem, inner=model so an early abort
+# leaves complete per-problem rows rather than complete per-model columns.
 declare -a CUDA_PROBLEMS=(
     "problems/01_fp8_gemm"
     "problems/02_kda_cutlass"
