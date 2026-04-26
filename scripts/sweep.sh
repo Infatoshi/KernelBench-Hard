@@ -20,10 +20,14 @@ declare -a ACTIVE_MATRIX=(
     "opencode zai/glm-5.1 "
     "opencode deepseek/deepseek-v4-pro "
     "opencode deepseek/deepseek-v4-flash "
-    # Deferred: ccr-claude is unreliable (returns malformed SSE shape to claude-code);
-    # codex 0.125.0 dropped chat-API support so can't route DeepSeek/GLM via codex either.
-    # opencode with custom OpenAI-shape providers is what works today.
-    # MiniMax M2.7: opencode 401s on api.minimaxi.com auth -- separate auth quirk to debug.
+    "opencode openrouter-pinned/minimax/minimax-m2.7 "
+    # Routing notes:
+    # - DeepSeek + GLM: opencode hitting native lab APIs directly.
+    # - MiniMax: api.minimaxi.com 401s on standard Bearer auth. Routed via
+    #   OpenRouter pinned to provider="Minimax" (the lab) via extraBody —
+    #   gets the lab's fp8 endpoint at $0.30/$1.20 per M, 99.7% uptime.
+    # - ccr-claude is unreliable (returns malformed SSE shape to claude-code);
+    #   codex 0.125.0 dropped chat-API support so non-OpenAI labs can't use codex.
 )
 
 # NVIDIA GPU sweep. Metal problem 08 is deferred (M4 Max track not prioritized

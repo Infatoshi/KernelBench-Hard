@@ -31,12 +31,12 @@ One harness per model, each pinned to the highest-fidelity native endpoint.
 | Model | Harness | Route |
 |-------|---------|-------|
 | Claude Opus 4.7 | `claude` | Anthropic direct |
-| GPT-5.5 xhigh | `codex` (`-c model_reasoning_effort="xhigh"`) | OpenAI direct |
+| GPT-5.5 xhigh | `codex` (`-c model_reasoning_effort="xhigh"`) | OpenAI direct (npm `@openai/codex`) |
 | Kimi K2.6 | `kimi` | Moonshot direct (api.moonshot.cn) |
-| GLM-5.1 | `claude` + [ccr-rust](https://github.com/RESMP-DEV/ccr-rust) | Z.AI direct (api.z.ai) |
-| Minimax M2.7 | `claude` + ccr-rust | Minimax direct (api.minimaxi.com) |
-| DeepSeek V4 Pro Max | `claude` + ccr-rust | DeepSeek direct (api.deepseek.com) |
-| DeepSeek V4 Flash | `claude` + ccr-rust | DeepSeek direct (api.deepseek.com) |
+| GLM-5.1 | `opencode zai/glm-5.1` | Z.AI direct (api.z.ai) |
+| Minimax M2.7 | `opencode openrouter-pinned/minimax/minimax-m2.7` | OpenRouter pinned to Minimax lab (fp8) |
+| DeepSeek V4 Pro | `opencode deepseek/deepseek-v4-pro` | DeepSeek direct (api.deepseek.com) |
+| DeepSeek V4 Flash | `opencode deepseek/deepseek-v4-flash` | DeepSeek direct (api.deepseek.com) |
 
 7 models × 7 problems = **49 agent-runs per sweep** (~37 GPU-hours at 45min/run).
 
