@@ -106,6 +106,7 @@ echo "Budget:     ${BUDGET_SECONDS}s"
 echo "========================================"
 
 START_TIME=$(date +%s)
+HARNESS_EXIT=0
 
 case "$HARNESS" in
     claude)
@@ -116,7 +117,8 @@ case "$HARNESS" in
             --model "$MODEL" \
             --add-dir "$PROBLEM_DIR" \
             -p "You are working in $PROBLEM_DIR. $PROMPT" \
-            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+            > "$LOG_FILE" 2> "$STDERR_FILE"
+        HARNESS_EXIT=$?
         ;;
 
     ccr-claude)
@@ -132,7 +134,8 @@ case "$HARNESS" in
                 --model "$MODEL" \
                 --add-dir "$PROBLEM_DIR" \
                 -p "You are working in $PROBLEM_DIR. $PROMPT" \
-            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+            > "$LOG_FILE" 2> "$STDERR_FILE"
+        HARNESS_EXIT=$?
         ;;
 
     codex)
@@ -147,7 +150,8 @@ case "$HARNESS" in
             --skip-git-repo-check \
             -C "$PROBLEM_DIR" \
             "$PROMPT" \
-            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+            > "$LOG_FILE" 2> "$STDERR_FILE"
+        HARNESS_EXIT=$?
 
         # Codex writes its rich session JSONL to ~/.codex/sessions/YYYY/MM/DD/
         # (local date). Locate by session_id printed to stderr — DO NOT pick the
@@ -172,7 +176,8 @@ case "$HARNESS" in
             -w "$PROBLEM_DIR" \
             --print \
             --output-format stream-json \
-            > "$LOG_FILE" 2> "$STDERR_FILE" || true
+            > "$LOG_FILE" 2> "$STDERR_FILE"
+        HARNESS_EXIT=$?
         ;;
 
     *)
@@ -184,6 +189,53 @@ esac
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
+
+# --- Detect whether the harness session ran to completion ----------------
+#
+# A run is INCOMPLETE if the harness exited from SIGTERM (timeout=124) OR if
+# the transcript is missing its terminal marker. Markers per harness:
+#   claude / ccr-claude:  {"type":"result"} (final summary with usage)
+#   codex:                {"payload":{"type":"task_complete"}}
+#   cursor:               {"type":"result"} (final usage block)
+#   kimi:                 no canonical terminal event — treat exit code as truth
+#
+# We surface this as session_complete=true|false in result.json so the viewer
+# can render an INCOMPLETE banner and downstream aggregation can exclude
+# partial runs from scoring.
+
+CHECK_FILE="$LOG_FILE"
+if [ "$HARNESS" = "codex" ] && [ -f "$RUN_DIR/codex_session.jsonl" ]; then
+    CHECK_FILE="$RUN_DIR/codex_session.jsonl"
+fi
+
+SESSION_COMPLETE=true
+case "$HARNESS" in
+    claude|ccr-claude|cursor)
+        if ! grep -q '"type":"result"' "$CHECK_FILE" 2>/dev/null; then
+            SESSION_COMPLETE=false
+        fi
+        ;;
+    codex)
+        if ! grep -q '"type":"task_complete"' "$CHECK_FILE" 2>/dev/null; then
+            SESSION_COMPLETE=false
+        fi
+        ;;
+    kimi)
+        # No reliable terminal marker; trust the exit code.
+        if [ "$HARNESS_EXIT" -ne 0 ]; then
+            SESSION_COMPLETE=false
+        fi
+        ;;
+esac
+
+# timeout(1) returns 124 on SIGTERM kill — always means partial.
+if [ "$HARNESS_EXIT" -eq 124 ]; then
+    SESSION_COMPLETE=false
+fi
+
+if [ "$SESSION_COMPLETE" = "false" ]; then
+    echo "WARN: harness session is INCOMPLETE (exit=$HARNESS_EXIT). Transcript usable but partial."
+fi
 
 # --- Post-run: correctness + benchmark + archive --------------------------
 
@@ -216,7 +268,9 @@ cat > "$RUN_DIR/result.json" <<JSON
     "has_solution": $HAS_SOLUTION,
     "correct": $CORRECT,
     "peak_fraction": $SCORE,
-    "elapsed_seconds": $ELAPSED
+    "elapsed_seconds": $ELAPSED,
+    "harness_exit_code": $HARNESS_EXIT,
+    "session_complete": $SESSION_COMPLETE
 }
 JSON
 

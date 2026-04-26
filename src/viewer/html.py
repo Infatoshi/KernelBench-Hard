@@ -112,6 +112,9 @@ code { font-family: inherit; }
 .tab.active { background: #1b1f27; color: #d8dee9; }
 .tab-pane { display: none; padding: 16px; background: #1b1f27; border: 1px solid #2c313a; border-top: none; }
 .tab-pane.active { display: block; }
+.incomplete-banner { background: #2b1517; border: 1px solid #ef4444; border-left: 4px solid #ef4444;
+    border-radius: 6px; padding: 14px 18px; margin-bottom: 16px; font-size: 14px; color: #fca5a5; }
+.incomplete-banner b { color: #fecaca; font-weight: 600; }
 """
 
 PRISM_HEAD = """
@@ -418,6 +421,26 @@ def render(run_dir: Path, session: Session, out_path: Path | None = None) -> Pat
         for k, v in summary
     ) + '</div>'
 
+    # Render an INCOMPLETE banner if result.json says session_complete=false
+    incomplete_banner = ""
+    if result_json:
+        try:
+            r = json.loads(result_json)
+            if r.get("session_complete") is False:
+                exit_code = r.get("harness_exit_code", "?")
+                reason = ("hit wall-clock budget (SIGTERM)" if exit_code == 124
+                          else f"harness exited with code {exit_code}")
+                incomplete_banner = (
+                    '<div class="incomplete-banner">'
+                    '<b>INCOMPLETE SESSION.</b> '
+                    f'{_esc(reason)}. The transcript below is usable but may be '
+                    'missing the agent\'s final tool calls or summary. '
+                    'Don\'t score this run as a clean failure or success.'
+                    '</div>'
+                )
+        except json.JSONDecodeError:
+            pass
+
     events_html = _render_timeline(session.events)
 
     tabs: list[tuple[str, str, str]] = []  # (id, label, html)
@@ -462,6 +485,7 @@ def render(run_dir: Path, session: Session, out_path: Path | None = None) -> Pat
     <span class="meta">cwd: <b>{_esc(session.cwd or '?')}</b></span>
   </header>
   <div class="container">
+    {incomplete_banner}
     {summary_html}
     {tab_bar}
     {tab_panes}
