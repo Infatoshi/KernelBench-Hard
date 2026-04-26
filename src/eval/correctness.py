@@ -19,11 +19,39 @@ DEFAULT_TOLERANCE = {
 }
 
 
+def _coerce_float(x):
+    """Accept int/float/str scientific-notation as float; pass through dicts."""
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, str):
+        try:
+            return float(x)
+        except ValueError:
+            return x
+    return x
+
+
 def tolerance_for_dtype(dtype: torch.dtype, override: dict | None = None) -> dict:
-    """Lookup atol/rtol for a given dtype, with optional per-problem override."""
-    if override is not None and str(dtype) in override:
-        v = override[str(dtype)]
-        return {"atol": v, "rtol": v} if isinstance(v, (int, float)) else v
+    """Lookup atol/rtol for a given dtype, with optional per-problem override.
+
+    The override dict is keyed by str(dtype). Values may be:
+      - a single number (or a string parseable as float, e.g. "5e-2") -> used
+        as both atol and rtol
+      - a dict {"atol": ..., "rtol": ...} -> used directly, with values coerced
+    """
+    # Accept several spellings of the same dtype key (PyYAML quirks):
+    # "torch.bfloat16", "bfloat16", torch.bfloat16
+    if override is not None:
+        type_str = str(dtype)                  # "torch.bfloat16"
+        short_str = type_str.split(".")[-1]    # "bfloat16"
+        v = override.get(type_str, override.get(short_str))
+        if v is not None:
+            v = _coerce_float(v)
+            if isinstance(v, (int, float)):
+                return {"atol": float(v), "rtol": float(v)}
+            if isinstance(v, dict):
+                return {"atol": _coerce_float(v.get("atol", 0)),
+                        "rtol": _coerce_float(v.get("rtol", 0))}
     if dtype not in DEFAULT_TOLERANCE:
         # Fall back to fp32 precision for unknown types.
         return DEFAULT_TOLERANCE[torch.float32]

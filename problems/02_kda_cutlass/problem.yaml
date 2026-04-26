@@ -26,7 +26,7 @@ peak_bandwidth_key: dram
 # bf16 default tolerance from src/eval/correctness.py is 1e-2 atol/rtol; KDA's
 # long recurrence accumulates more error than a single GEMM, so we relax slightly.
 tolerance:
-  torch.bfloat16: 5e-2
+  torch.bfloat16: 0.05  # was "5e-2" -- PyYAML parses un-dotted sci-notation as string
 
 # Forbidden ops -- using any in solution.py fails correctness post-hoc.
 # The whole point of the problem is to write the kernel; calling FLA's existing
