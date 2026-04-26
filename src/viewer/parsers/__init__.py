@@ -63,6 +63,11 @@ def sniff(path: Path) -> str:
             if obj.get("type") == "message" and "session_id" in obj:
                 return "droid"
 
+            # OpenCode: events wrap a `part` object and use sessionID (camelCase).
+            if obj.get("type") in {"step_start", "step_finish", "tool_use", "text", "text_delta", "error"} \
+                    and ("sessionID" in obj or "part" in obj):
+                return "opencode"
+
             return "claude"  # fallback
 
     raise ValueError(f"could not sniff format of {path}")
@@ -85,4 +90,7 @@ def parse(path: Path) -> Session:
     if fmt == "droid":
         from src.viewer.parsers import droid
         return droid.parse(path)
+    if fmt == "opencode":
+        from src.viewer.parsers import opencode
+        return opencode.parse(path)
     raise ValueError(f"unknown format {fmt!r}")

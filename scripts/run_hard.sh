@@ -180,9 +180,19 @@ case "$HARNESS" in
         HARNESS_EXIT=$?
         ;;
 
+    opencode)
+        # OpenCode SST with custom OpenAI-shape providers (deepseek, zai, minimax).
+        # Provider/model pair encoded as MODEL="provider/model-id" e.g.
+        # "deepseek/deepseek-v4-pro" or "zai/glm-5.1".
+        ( cd "$PROBLEM_DIR" && timeout "$BUDGET_SECONDS" opencode run \
+            --pure --format json -m "$MODEL" "$PROMPT" \
+            </dev/null > "$LOG_FILE" 2> "$STDERR_FILE" )
+        HARNESS_EXIT=$?
+        ;;
+
     *)
         echo "Unknown harness: $HARNESS" >&2
-        echo "Supported: claude, ccr-claude, codex, kimi" >&2
+        echo "Supported: claude, ccr-claude, codex, kimi, opencode" >&2
         exit 1
         ;;
 esac
@@ -220,7 +230,7 @@ case "$HARNESS" in
             SESSION_COMPLETE=false
         fi
         ;;
-    kimi)
+    kimi|opencode)
         # No reliable terminal marker; trust the exit code.
         if [ "$HARNESS_EXIT" -ne 0 ]; then
             SESSION_COMPLETE=false

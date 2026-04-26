@@ -12,6 +12,7 @@ dependencies = [
     "pytest>=8.0",
     "ruff>=0.6",
     "einops>=0.8.2",
+    "requests<2.33",
 ]
 
 [build-system]

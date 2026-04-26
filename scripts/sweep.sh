@@ -17,10 +17,13 @@ declare -a ACTIVE_MATRIX=(
     "claude claude-opus-4-7 "
     "codex gpt-5.5 xhigh"
     "kimi kimi-k2.6 "
-    "ccr-claude glm-5.1 "
-    "ccr-claude minimax-m2.7 "
-    "ccr-claude deepseek-v4-pro-max "
-    "ccr-claude deepseek-v4-flash "
+    "opencode zai/glm-5.1 "
+    "opencode deepseek/deepseek-v4-pro "
+    "opencode deepseek/deepseek-v4-flash "
+    # Deferred: ccr-claude is unreliable (returns malformed SSE shape to claude-code);
+    # codex 0.125.0 dropped chat-API support so can't route DeepSeek/GLM via codex either.
+    # opencode with custom OpenAI-shape providers is what works today.
+    # MiniMax M2.7: opencode 401s on api.minimaxi.com auth -- separate auth quirk to debug.
 )
 
 # NVIDIA GPU sweep. Metal problem 08 is deferred (M4 Max track not prioritized
