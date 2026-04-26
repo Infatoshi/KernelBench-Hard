@@ -117,8 +117,7 @@ case "$HARNESS" in
             --model "$MODEL" \
             --add-dir "$PROBLEM_DIR" \
             -p "You are working in $PROBLEM_DIR. $PROMPT" \
-            > "$LOG_FILE" 2> "$STDERR_FILE"
-        HARNESS_EXIT=$?
+            > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
         ;;
 
     ccr-claude)
@@ -134,8 +133,7 @@ case "$HARNESS" in
                 --model "$MODEL" \
                 --add-dir "$PROBLEM_DIR" \
                 -p "You are working in $PROBLEM_DIR. $PROMPT" \
-            > "$LOG_FILE" 2> "$STDERR_FILE"
-        HARNESS_EXIT=$?
+            > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
         ;;
 
     codex)
@@ -150,8 +148,7 @@ case "$HARNESS" in
             --skip-git-repo-check \
             -C "$PROBLEM_DIR" \
             "$PROMPT" \
-            > "$LOG_FILE" 2> "$STDERR_FILE"
-        HARNESS_EXIT=$?
+            > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
 
         # Codex writes its rich session JSONL to ~/.codex/sessions/YYYY/MM/DD/
         # (local date). Locate by session_id printed to stderr — DO NOT pick the
@@ -176,8 +173,7 @@ case "$HARNESS" in
             -w "$PROBLEM_DIR" \
             --print \
             --output-format stream-json \
-            > "$LOG_FILE" 2> "$STDERR_FILE"
-        HARNESS_EXIT=$?
+            > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
         ;;
 
     opencode)
@@ -186,8 +182,7 @@ case "$HARNESS" in
         # "deepseek/deepseek-v4-pro" or "zai/glm-5.1".
         ( cd "$PROBLEM_DIR" && timeout "$BUDGET_SECONDS" opencode run \
             --pure --format json -m "$MODEL" "$PROMPT" \
-            </dev/null > "$LOG_FILE" 2> "$STDERR_FILE" )
-        HARNESS_EXIT=$?
+            </dev/null > "$LOG_FILE" 2> "$STDERR_FILE" ) || HARNESS_EXIT=$?
         ;;
 
     *)
@@ -264,7 +259,10 @@ if [ -f "$PROBLEM_DIR/solution.py" ]; then
     if grep -q "^PASS" "$CHECK_LOG"; then
         CORRECT=true
         echo "Running benchmark.py..."
-        (cd "$PROBLEM_DIR" && timeout 600 uv run python benchmark.py) > "$BENCH_LOG" 2>&1 || true
+        # Some problems (KDA chunked recurrence, large-vocab softmax, sonic-MoE)
+        # have references that loop in Python, so 20 perf trials × 4 variants ×
+        # 5 shapes can take 5-10 min. Generous budget.
+        (cd "$PROBLEM_DIR" && timeout 1800 uv run python benchmark.py) > "$BENCH_LOG" 2>&1 || true
         SCORE=$(grep -oP 'peak_fraction:\s*\K[0-9.]+' "$BENCH_LOG" | head -1 || echo "null")
     fi
 fi
