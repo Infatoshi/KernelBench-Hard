@@ -4,6 +4,57 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-04-27 — Cheap-tier shakedown sweep: 35 runs, $2.14, full grid
+
+First end-to-end validation of the new PROMPT.txt regime + token-logging wiring. Five cheap-tier models against the full 7-problem deck, sequential.
+
+### Final grid
+
+| Model | 01 fp8 | 02 kda | 03 paged | 04 kahan | 05 topk | 06 moe | 07 w4a16 | PASS |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| deepseek-v4-flash | FAIL | 0.009 | **0.167** | **0.138** | FAIL | 0.083 | **0.134** | 5/7 |
+| deepseek-v4-pro | FAIL | FAIL | 0.027 | 0.101 | 0.011 | **0.108** | 0.125 | 5/7 |
+| minimax-m2.7 | ERR | ERR | FAIL | 0.034 | FAIL | 0.076 | 0.030 | 3/7 |
+| qwen3.6-27b | ERR | ERR | FAIL | ERR | ERR | ERR | ERR | 0/7 |
+| qwen3.6-35b-a3b | ERR×7 (no tool-use endpoint) | | | | | | | 0/7 |
+
+ERR = no `solution.py` written; FAIL = solution.py present, `check.py` failed; numeric = peak_fraction (PASS).
+
+### Token totals + per-model API spend
+
+| Model | input | output | cache_read | reasoning | est. spend |
+| --- | --- | --- | --- | --- | --- |
+| deepseek-v4-flash | 400k | 260k | 39.4M | 461k | $0.26 |
+| deepseek-v4-pro | 336k | 163k | 15.7M | 319k | $0.56 |
+| minimax-m2.7 | 1.50M | 164k | 15.5M | 56k | $0.71 |
+| qwen3.6-27b | 709k | 10k | 57k | 41k | $0.61 |
+| qwen3.6-35b-a3b | 0 | 0 | 0 | 0 | $0.00 |
+| **TOTAL** | | | | | **$2.14** |
+
+DeepSeek's 39.4M cache_read on Flash and 15.7M on Pro are the most striking numbers — implicit caching dominates the input budget. Cache reads are ~10x cheaper than fresh input on most providers, so the "input" column understates the real efficiency win. MiniMax cache_read was high too (15.5M) — Fireworks fp8 endpoint also caches.
+
+Qwen 27B's 10k total output across 7 attempts is diagnostic of something deeper than "model can't kernel" — it barely emitted any tool calls. Either the OpenRouter/Alibaba tool-call format isn't matching what opencode expects, or the model defaults to a reasoning-mode that never produces tool-use. Worth a transcript dive before next sweep.
+
+### What this validated
+
+1. **The PROMPT.txt regime works end-to-end.** Models that can drive tool calls (DeepSeek, MiniMax) produced real solutions; verification gate triggered `python check.py` invocations consistently in the passing runs.
+2. **Token logging is uniformly populated** across opencode runs. The `usage` block in result.json carries cleanly. Cross-harness comparison data is now in place.
+3. **OpenRouter pinning works** for Alibaba (Qwen) and Fireworks (MiniMax). MiniMax even had real cache_read numbers, confirming Fireworks supports prompt caching.
+4. **My cost estimate was 2.8x conservative.** Estimated $5-6, actual $2.14. Failed/ERR runs save money on failure modes that bail early. Future sweeps can be planned with this calibration.
+
+### What it surfaced
+
+1. **Both DeepSeek tiers cluster around 5/7 PASS** with overlapping but non-identical strengths. Flash hits higher peaks on memory-bound problems (paged_attn 0.167, kahan 0.138, w4a16 0.134); Pro is more consistent on compute-bound (sonic_moe 0.108) and has a non-zero TopK pass where Flash regressed. Both fail FP8 GEMM and KDA — those are the deck's hardest two for cheap-tier reasoning models.
+2. **MiniMax's 3/7 is the floor for "model can autonomously kernel."** It needs the simpler problems (kahan softmax, sonic_moe up-proj, w4a16) and bails on harder ones with no solution.py. Useful as a benchmark sanity floor.
+3. **Qwen 3.6 27B 0/7 is a harness-integration failure, not a capability failure.** 708k input tokens consumed but only 9.5k output suggests opencode is talking to it and Alibaba is responding, but tool-call exchange isn't happening. Needs investigation before counting it out as a model.
+4. **qwen3.6-35b-a3b is benchmark-blocked.** Documented in the previous entry; confirmed by 7×0-second ERR runs.
+
+### Reproducibility footnote
+
+DeepSeek V4 Flash on TopK: passed at 0.0019 yesterday (24 hours ago, prompt-edit experiment); failed today on the shakedown. Same prompt, same model, same provider. The variance on hard problems near the model's capability floor is real and not insignificant. For TopK specifically, Flash is on the edge of "can solve this" — sometimes does, sometimes doesn't. Future passes should report N>=2 trials per (model, problem) and note variance, not just a single peak_fraction.
+
+---
+
 ## 2026-04-27 — Harness configuration parity: what we touched and why
 
 When you run "the same task" through five different agent CLIs, the meaning of "same" is doing a lot of work. This entry catalogs every config knob we touched to make cross-harness results comparable, and (more importantly) the asymmetries we could not eliminate. Read this if you want to know how much trust to place in any given peak_fraction comparison.
@@ -136,7 +187,7 @@ Validated on the Flash rerun: input=57,555, output=12,158, cache_read=1,367,296,
 
 All routed through `opencode openrouter-pinned/...` with `provider.order = ["Alibaba", "Xiaomi", "Minimax", "DeepSeek", "Z.AI"]` and `allow_fallbacks: false`.
 
-**Skipped: `qwen/qwen3.6-35b-a3b`.** Alibaba does not host this model on OpenRouter — only AtlasCloud and Parasail (both fp8). Skipping to maintain the native-lab-only integrity rule. To include later, add AtlasCloud to provider.order; flag for revisit if user OKs third-party fp8 for this one model.
+**`qwen/qwen3.6-35b-a3b` — infrastructure-blocked. Holding off.** Tried twice (skipped initially for native-lab integrity; reversed on user direction with AtlasCloud and Parasail appended to provider.order). Shakedown sweep then surfaced the actual blocker: every run fails in <1s with `APIError 404: No endpoints found that support tool use. Try disabling "bash"`. Neither AtlasCloud nor Parasail advertises tool-use capability to OpenRouter for this model, and our agent harness is fundamentally tool-call-driven (bash/read/edit). There is no integrity-clean route through which an autonomous agent can use this model right now. Removed from the active matrix; will revisit if (a) Alibaba hosts it on OpenRouter, (b) AtlasCloud/Parasail expose tool-use, or (c) the model lands on a lab-direct API like Z.AI/DeepSeek already are. Filed as a useful negative result — the benchmark surfaces "no autonomous-agent endpoint exists for this model" as a real outcome, not just an integration bug.
 
 **TODO — when budget permits:**
 - **GPT-5.5 Pro.** Twitter request × 1 (insanowskyy: "what about 5.5 pro?"). Not on the active matrix because the OpenAI per-call cost is high enough to be a real budget item; coding-plan doesn't apply to API-direct gpt-5.5-pro calls. Revisit when sweep cadence justifies the spend.

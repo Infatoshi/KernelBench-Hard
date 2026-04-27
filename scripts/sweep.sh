@@ -25,6 +25,10 @@ declare -a ACTIVE_MATRIX=(
     "opencode openrouter-pinned/qwen/qwen3.6-plus "
     "opencode openrouter-pinned/qwen/qwen3.6-27b "
     "opencode openrouter-pinned/xiaomi/mimo-v2.5-pro "
+    # qwen3.6-35b-a3b dropped: AtlasCloud/Parasail (only providers serving
+    # it) don't advertise tool-use to OpenRouter, so the agent harness can't
+    # reach it. See DEVLOG. Keep route defined in opencode config so this is
+    # a one-line re-add if/when an integrity-clean endpoint appears.
     # Routing notes:
     # - claude-opus-4-7 at effort=max for parity with codex gpt-5.5 xhigh
     #   (the highest CLI-exposed reasoning tier). Coding-plan billing means
@@ -34,11 +38,12 @@ declare -a ACTIVE_MATRIX=(
     # - MiniMax: api.minimaxi.com 401s on standard Bearer auth. Routed via
     #   OpenRouter pinned to provider="Minimax" (the lab) via extraBody —
     #   gets the lab's fp8 endpoint at $0.30/$1.20 per M, 99.7% uptime.
-    # - Qwen 3.6 family + MiMo via OpenRouter pinned to Alibaba / Xiaomi
-    #   (their native labs). qwen/qwen3.6-35b-a3b is NOT included — Alibaba
-    #   does not host it on OpenRouter; only AtlasCloud and Parasail serve
-    #   it (both fp8). Skipped to keep the native-lab-only integrity rule.
-    #   To include it later, add AtlasCloud to provider.order in opencode.
+    # - Qwen 3.6 family + MiMo via OpenRouter pinned to native labs first
+    #   (Alibaba, Xiaomi). qwen/qwen3.6-35b-a3b is NOT hosted by Alibaba on
+    #   OpenRouter — only AtlasCloud and Parasail serve it (both fp8).
+    #   AtlasCloud and Parasail appended to provider.order so this single
+    #   model routes to fp8 third-party; the rest of the family stays on
+    #   the lab. Disclosed as a precision-asymmetric row in DEVLOG.
     # - ccr-claude is unreliable (returns malformed SSE shape to claude-code);
     #   codex 0.125.0 dropped chat-API support so non-OpenAI labs can't use codex.
 )
