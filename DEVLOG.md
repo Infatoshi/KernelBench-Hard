@@ -4,6 +4,93 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-04-27 — Harness configuration parity: what we touched and why
+
+When you run "the same task" through five different agent CLIs, the meaning of "same" is doing a lot of work. This entry catalogs every config knob we touched to make cross-harness results comparable, and (more importantly) the asymmetries we could not eliminate. Read this if you want to know how much trust to place in any given peak_fraction comparison.
+
+### Reasoning effort tiers (asymmetric across harnesses)
+
+The CLI surface for "make the model think harder" differs per harness. Our active-matrix settings:
+
+| Harness | Model | Setting | What it actually does |
+| ------- | ----- | ------- | --------------------- |
+| claude | claude-opus-4-7 | `--effort max` | Highest of the {low, medium, high, xhigh, max} tiers exposed by claude-code 2.1.119. Triggers extended thinking with the largest budget the CLI allows. |
+| codex | gpt-5.5 | `-c model_reasoning_effort="xhigh"` | Highest effort tier codex exposes for gpt-5.5. |
+| kimi | kimi-k2.6 | (default) | kimi-cli does not expose a reasoning-effort flag. K2.6 is a reasoning model and reasons by default; the budget is whatever Moonshot allocates. |
+| opencode | deepseek-v4-pro / -flash, glm-5.1, minimax, qwen, mimo | (default) | opencode SST has no per-call reasoning-effort hook. The underlying model decides whether and how much to reason; some (DeepSeek V4 Pro, GLM-5.1) are reasoning models, others aren't. |
+
+This is the biggest "same task, different shape" asymmetry in the benchmark. We use the highest tier each CLI exposes; we don't pretend that's identical to what another model does on its own. Result tables should be read as "model X via harness Y at the maximum effort that harness exposes," not "model X at parameterized effort level Z."
+
+### Provider routing (what reaches the GPU)
+
+OpenRouter dispatches to whichever backend has capacity. Many providers serve int4/fp4-quantized weights of frontier models; running a benchmark against int4 of GLM-5.1 is not the same as running against the lab's full bf16/fp8 weights. We pin every OpenRouter-routed model to its native lab provider via `extraBody.provider.order` with `allow_fallbacks: false`.
+
+Current provider order in `~/.config/opencode/opencode.json` openrouter-pinned: `["Alibaba", "Xiaomi", "Minimax", "DeepSeek", "Z.AI"]`. With `allow_fallbacks: false`, a request fails if the named providers don't host the model, rather than silently falling back to a quantized third party. The fail-loud is intentional — we'd rather see "no integrity-clean route" than ship a quietly-quantized number.
+
+Models routed lab-direct (not OpenRouter): `deepseek-v4-pro`, `deepseek-v4-flash`, `glm-5.1`, `glm-5`. These hit the lab's API directly via OpenAI-shape providers in opencode config.
+
+Excluded from the matrix: `qwen/qwen3.6-35b-a3b`. Alibaba does not serve it on OpenRouter; only AtlasCloud and Parasail (both fp8) do. Including it would mean either accepting third-party fp8 (breaks the integrity rule) or running against a different precision than the rest of the Qwen family (apples-to-oranges). Skipped, documented; user can opt back in if they accept the tradeoff.
+
+### Codex version pin
+
+Local rust binary `codex 0.118.0` rejects `-m gpt-5.5` ("model not recognized"). The npm `@openai/codex` 0.125.0 accepts it but dropped `wire_api="chat"` config support, which means codex 0.125.0 cannot route arbitrary OpenRouter models — only OpenAI's `/responses` API works. Net result: codex is the right harness for OpenAI models specifically, not a universal harness for anything OpenAI-compatible. Z.AI doesn't implement `/responses` so GLM cannot be reached through codex at all; we route GLM through opencode instead.
+
+A second codex quirk: `codex 0.125.0` updates SQLite session state by touching old session JSONL files in `~/.codex/sessions/<date>/`, which broke "find by mtime" archival. Fix: extract `session id: <uuid>` from stderr and `find -name "*${uuid}*.jsonl"` to locate the right transcript.
+
+### Workspace state and template files
+
+Every per-run cycle deletes everything in the problem dir except the template set. Current TEMPLATE_FILES (in `scripts/run_hard.sh`): `reference.py sota.py shapes.py problem.yaml check.py benchmark.py PROMPT.txt`. Anything else the agent created (build artifacts, scratch kernels, profiling traces, intermediate `.cu` files) gets archived to `outputs/runs/<ts>/scratch/` and removed from the workspace before the next run.
+
+`shapes.py` and `problem.yaml` stay in the workspace (model-visible) only because `check.py` and `benchmark.py` import them at runtime. A curious agent can `cat problem.yaml` and re-read the regime / forbidden ops list / tolerance — the prompt does not direct it there, but the option exists. Closing this leak would require refactoring check/benchmark to read yaml from outside the workspace; not load-bearing yet, flagged for later.
+
+### Per-trial benchmarking methodology
+
+Centralized in `src/eval/timing.py` so every problem's `benchmark.py` uses the same cadence:
+- 10 warmup calls (absorbs Triton autotune ~7 configs and torch.compile reduce-overhead CUDA-graph capture).
+- Per-trial L2 flush via 128 MB write to a scratch tensor (RTX PRO 6000 L2 is 96 MB, so 128 MB strictly evicts).
+- CUDA Events with synchronize() AFTER record() but BEFORE elapsed_time().
+- Median over 30 trials (default; some problems use fewer for slow Python references).
+
+Known biases left in:
+- `torch.compile(mode="reduce-overhead")` gets CUDA graphs (eliminates launch overhead). Custom Triton/CUDA kernels do not. On small shapes where launch overhead matters, this gives the compile baseline an artificial advantage. Accepted as the cost of using `torch.compile` as the published "compiled" reference line.
+- cuBLAS / cuDNN allocate workspaces on first call. The 10-call warmup absorbs.
+- Median over a small number of trials catches outliers but won't expose bimodal latency distributions.
+
+### Wall-clock budget, not turn count
+
+`BUDGET_SECONDS=2700` (45 min) per (model, problem) run, enforced by `timeout(1)`. Models get unlimited turns within the budget. v3 used `for turn in range(max_turns)` and got chewed up by reasoning models (GLM-5.1) burning turns on filesystem exploration before writing anything — a turn cap penalizes models with verbose tool-use patterns regardless of capability. Wall-clock is the fairer floor.
+
+### Token logging (cross-harness uniformity)
+
+Every transcript schema is different. `scripts/extract_usage.py` parses each one and emits a normalized shape:
+```
+{ input_tokens, output_tokens, cache_read_tokens,
+  cache_creation_tokens, reasoning_tokens, total_cost_usd }
+```
+
+What's countable per harness:
+- claude / kimi: terminal `{"type":"result"}` event has cumulative usage with `total_cost_usd` (only when running off API direct, not coding-plan).
+- codex: per-turn `payload.type=token_count` events have `last_token_usage`; we sum.
+- opencode: each `step_finish` carries `part.tokens` with input/output/reasoning + cache.read/cache.write; we sum.
+
+What's NOT countable:
+- Coding-plan billing (Claude Code, Codex on a subscription) does not expose per-call USD in the transcript. Token counts ARE present and are what we use for cross-model comparison. Per-call cost is reconstructable post-hoc from public price sheets if needed.
+- Raw chain-of-thought content. Both `claude` (thinking blocks come back as `{"thinking": "", "signature": "..."}`) and `codex` (shows reasoning *summaries*, not raw CoT) encrypt the actual reasoning content in their CLI delivery channels. We get cryptographic proof that thinking happened, plus the token cost, but not the content itself. This symmetric disclosure floor is enforced by the harnesses themselves; we cannot lift it without bypassing them and calling lab APIs directly.
+
+### What this means for cross-harness comparisons
+
+A peak_fraction number from the benchmark is meaningful within these caveats:
+- The hardware target is fixed (RTX PRO 6000 SM120, GDDR7 1.8 TB/s peak).
+- The problem definition (reference.py, shapes, tolerance, forbidden ops) is fixed and append-only after publication.
+- Each model runs at the highest effort tier its harness CLI exposes, but those tiers are not necessarily equivalent across vendors.
+- Provider pinning ensures the model weights served are the lab's full-precision endpoint, not a quantized third party.
+- Wall-clock budget and benchmarking methodology (warmup, L2 flush, median) are identical for all runs.
+- Coding-plan billed runs (claude, codex) report token counts only, no per-call USD.
+
+If you build on these numbers, cite the (model, harness, effort, provider) tuple, not just the model name. The same model behind a different harness will produce a different number.
+
+---
+
 ## 2026-04-27 — Verification gate refinement (validated experimentally)
 
 **Setup.** First DeepSeek V4 Flash run on TopK with the new PROMPT.txt regime: PASSed `has_solution`, FAILed correctness because the kernel allocated `threads * k * 8 = 128 KB` of dynamic SMEM on shape 0 (k=64), which exceeds the 100 KB default opt-in cap. Tool-call inventory showed Flash had run zero `python check.py` invocations — it had self-validated with two ad-hoc `python -c "from solution import ..."` snippets that almost certainly used the small default shape (16 KB SMEM) and never iterated through all five shapes.
