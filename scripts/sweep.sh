@@ -23,12 +23,14 @@ declare -a ACTIVE_MATRIX=(
     "opencode openrouter-pinned/minimax/minimax-m2.7 "
     "opencode openrouter-pinned/qwen/qwen3.6-max-preview "
     "opencode openrouter-pinned/qwen/qwen3.6-plus "
-    "opencode openrouter-pinned/qwen/qwen3.6-27b "
     "opencode openrouter-pinned/xiaomi/mimo-v2.5-pro "
+    # qwen3.6-27b dropped after 0/7 PASS in shakedown. Failure is compliance
+    # (acknowledges verification gate, doesn't act on it) + API hallucination
+    # (writes invented Triton/Python methods). Not a routing or harness issue.
+    # See DEVLOG. Route stays defined in opencode config; re-add is one line.
     # qwen3.6-35b-a3b dropped: AtlasCloud/Parasail (only providers serving
     # it) don't advertise tool-use to OpenRouter, so the agent harness can't
-    # reach it. See DEVLOG. Keep route defined in opencode config so this is
-    # a one-line re-add if/when an integrity-clean endpoint appears.
+    # reach it. See DEVLOG.
     # Routing notes:
     # - claude-opus-4-7 at effort=max for parity with codex gpt-5.5 xhigh
     #   (the highest CLI-exposed reasoning tier). Coding-plan billing means

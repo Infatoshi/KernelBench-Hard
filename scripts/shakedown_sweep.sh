@@ -26,8 +26,8 @@ declare -a MATRIX=(
     "opencode deepseek/deepseek-v4-flash"
     "opencode deepseek/deepseek-v4-pro"
     "opencode openrouter-pinned/minimax/minimax-m2.7"
-    "opencode openrouter-pinned/qwen/qwen3.6-27b"
-    # qwen3.6-35b-a3b: dropped, no tool-use endpoint available.
+    # qwen3.6-27b: dropped after 0/7 PASS. Compliance + hallucination, see DEVLOG.
+    # qwen3.6-35b-a3b: dropped, no tool-use endpoint available, see DEVLOG.
 )
 
 declare -a PROBLEMS=(

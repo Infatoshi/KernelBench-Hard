@@ -4,6 +4,110 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-04-27 — opencode workspace leak: root cause + partial fix
+
+The Qwen 27B forensic dive (next entry) led to auditing every opencode-routed `read` call across the shakedown. The leak is universal across all opencode-routed models, not just Qwen.
+
+### What was being read outside the workspace
+
+Across 31 opencode runs (Qwen 35B-A3B excluded — never made it past routing):
+
+| Path | Reads | Why it matters |
+| --- | --- | --- |
+| `src/hardware/rtx_pro_6000.py` | 9 | Full peak TFLOPS table (fp4=800, fp8=400, bf16=200, dram=1800). The hardware spec we deliberately stripped from PROMPT.txt is sitting four directories up. |
+| `src/eval/correctness.py` | 12 | Per-dtype tolerance lookup. Models can verify what atol/rtol they need to pass before writing code. |
+| `src/eval/timing.py` | 5 | Benchmarking methodology (warmup count, L2 flush size, iter count). Lets a model game the timing harness. |
+| `src/eval/roofline.py` | 2 | Throughput formulas. Lets the model reverse-engineer the score. |
+| `~/.claude/skills/perf-optim/SKILL.md` | 7 | The user's personal CUDA optimization atlas — speed-of-light methodology, profiling tools, the exact "always profile before optimizing" framing. |
+| `~/.claude/skills/kernel/SKILL.md` | 2 | The user's master kernel-skill index. |
+| `CLAUDE.md` | 1 | Developer-facing repo notes. |
+| `/home/infatoshi/cuda/KernelBench/problems/07_w4a16_gemm` | 1 | Sibling repo on the same machine — model walked outside KernelBench-Hard entirely. |
+
+### Root cause
+
+`opencode --pure` does not sandbox file system access. `--pure` means "run without external plugins" — nothing about FS isolation. opencode's `read` tool dispatches to OS file read with no path restrictions; whatever the user running opencode can read, the tool can read. The "soft boundary" of "this is your workspace" was just the prompt + cwd, neither of which constrains the tool implementation.
+
+Same architecture in claude-code (`--add-dir` extends visibility but doesn't restrict; bash can still touch absolute paths) and codex (no path constraints at all). The leak is universal across all three CLI harnesses; opencode was just first-noticed because Qwen 27B was particularly aggressive about reading files.
+
+### Fix (partial)
+
+Added to `~/.config/opencode/opencode.json`:
+```json
+"permission": {
+  "external_directory": "deny"
+}
+```
+
+This blocks tool calls that touch paths outside the working directory where opencode was started (verified end-to-end: a smoke run trying to `read /home/infatoshi/cuda/KernelBench-Hard/src/hardware/rtx_pro_6000.py` returned `status: "error"` with the message *"The user has specified a rule which prevents you from using this specific tool call"*, and the model correctly reported the block).
+
+### What's still open (and why)
+
+When opencode dumps its rule list on a denied call, it surfaces auto-generated allow rules for **every Claude Code skill the user has installed**:
+
+```
+{"permission":"external_directory", "pattern":"/home/infatoshi/.claude/skills/perf-optim/*", "action":"allow"}
+{"permission":"external_directory", "pattern":"/home/infatoshi/.claude/skills/kernel/*",      "action":"allow"}
+{"permission":"external_directory", "pattern":"/home/infatoshi/.claude/skills/<each-skill>/*", "action":"allow"}
+```
+
+These are more specific than my `*: deny`, so they win. The user's CUDA-optimization skills (`perf-optim`, `kernel`, `gpu-profiling`, `port-kernel`, `debug-gpu`) remain readable. That's a separate, smaller leak (user's personal notes, not benchmark internals), but the prompt's "look up PTX docs and library headers" directive is degraded if the model can short-circuit via the user's pre-written kernel atlas.
+
+To close fully, options are:
+1. **Rename/move the skills directory before each sweep.** `mv ~/.claude ~/.claude.bak` for the duration. Cheap, intrusive.
+2. **Find the opencode config knob that controls skill discovery and disable it.** Not surfaced in the public docs that I could find; would need to source-dive opencode.
+3. **bwrap the harness.** `bwrap --bind $PROBLEM_DIR /workspace --ro-bind /usr /usr ... opencode run`. Real isolation; medium-weight; works for all three harnesses uniformly.
+4. **Accept the user's-skills leak.** It's pre-existing personal knowledge, equivalent to "the model has been pre-trained on this content." Different category than leaking benchmark internals.
+
+For now: option (1) for serious sweeps, otherwise note the asymmetry. The prompt directive remains the primary signal.
+
+### Cross-harness scope
+
+claude-code and codex are not currently behind any path restriction. Their `Bash`, `Read`, `Edit`, etc. tools see everything the user account does. The leak audit only covered opencode runs because those were the only fresh runs in `outputs/runs/` after we deleted the topk-overnight set. Worth re-auditing whenever the next claude/codex sweep runs. Likely fixable for both via bwrap if the leak proves load-bearing.
+
+### Reading-the-leaderboard note
+
+Until full sandboxing lands, **opencode-routed numbers from before this commit reflect a leakier environment than the current PROMPT.txt regime claims**. Models that read `rtx_pro_6000.py` had peak TFLOPS as a number, not a thing-to-look-up. Models that read `perf-optim/SKILL.md` had a written CUDA optimization atlas. Their scores are not directly comparable to a future run under the post-fix permission policy. Re-running the shakedown after the fix would tell us how much the leak actually mattered, and is worth doing before any "official" leaderboard publication.
+
+---
+
+## 2026-04-27 — Qwen 3.6 27B: dropped from active matrix (capability + compliance)
+
+Forensic dive into the 0/7 result on the cheap-tier shakedown.
+
+### Failure-mode breakdown across 7 runs
+
+| Problem | Steps | Tool calls | Wrote solution.py | End reason |
+| --- | --- | --- | --- | --- |
+| 01 fp8_gemm | 5 | 11 reads + 4 bash | NO | `stop` |
+| 02 kda_cutlass | **1** | **0** | NO | `stop` (immediate bail) |
+| 03 paged_attention | 8 | 18 (incl. 1 write) | YES — but compile-broken | `stop` after write, no verify |
+| 04 kahan_softmax | 3 | 8 reads | NO | `stop` |
+| 05 topk_bitonic | 8 | 17 | NO | `length` (output token cap hit) |
+| 06 sonic_moe | 5 | 14 | NO | `other` |
+| 07 w4a16_gemm | **2** | **1 read** | NO | `stop` (immediate bail) |
+
+### Three intertwined patterns
+
+**Variable engagement.** Step counts ranged 1-8 with no clear relationship to problem difficulty. Two runs (KDA, W4A16) bailed in 1-2 steps with effectively zero engagement. Other runs explored extensively. Same prompt each time, same model, same provider.
+
+**Explores extensively, refuses to write.** 5/7 runs ended with no `solution.py`. The model reads `reference.py`, `problem.yaml`, `shapes.py`, `check.py`, `benchmark.py`, runs `nvidia-smi`/`nvcc`/`triton` probes — and then stops. On the paged attention run it actually said *"Let me verify the check infrastructure before writing the kernel — I noticed syntax issues in those files"* — vocalized the verification gate, then stopped without acting on it. Knows the rule, agrees with it out loud, doesn't follow through. This is a deeper compliance gap than DeepSeek Flash had pre-prompt-edit; tightening the prompt sentence further isn't likely to help.
+
+**When it does write code, it hallucinates APIs.** The one solution.py it produced (paged_attention, 8230 chars of real Triton) had:
+```python
+scale = 1.0 / float(HEAD_DIM).__sqrt__()
+```
+`__sqrt__` is not a Python or Triton method — invented. `float(tl.constexpr)` also fails because Python's `float()` doesn't accept Triton tensors. Compilation crash on the first call. The model then *did not run check.py*, so it never saw the error, and stopped.
+
+### Decision
+
+Dropped from `scripts/sweep.sh` ACTIVE_MATRIX and `scripts/shakedown_sweep.sh`. The route stays defined in opencode config so re-add is a one-line restore. Revisit when qwen3.7 lands or if a future agent harness materially improves Qwen's tool-use compliance.
+
+### Observation worth keeping
+
+Qwen 27B's pattern is the inverse of the verification-gate experiment with Flash: Flash didn't read the rule and skipped the test; tightening the prompt fixed it. Qwen *does* read the rule, *does* acknowledge it, then ignores it anyway. That's not a prompt-clarity problem — it's a model-side compliance issue. The verification gate works on models that have the discipline-half latent and need the cue; it doesn't manufacture discipline where it isn't present.
+
+---
+
 ## 2026-04-27 — Cheap-tier shakedown sweep: 35 runs, $2.14, full grid
 
 First end-to-end validation of the new PROMPT.txt regime + token-logging wiring. Five cheap-tier models against the full 7-problem deck, sequential.
