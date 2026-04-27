@@ -14,18 +14,31 @@ cd "$REPO_ROOT"
 # (harness, model, reasoning_effort) tuples.
 # Empty reasoning_effort = use default.
 declare -a ACTIVE_MATRIX=(
-    "claude claude-opus-4-7 "
+    "claude claude-opus-4-7 max"
     "codex gpt-5.5 xhigh"
     "kimi kimi-k2.6 "
     "opencode zai/glm-5.1 "
     "opencode deepseek/deepseek-v4-pro "
     "opencode deepseek/deepseek-v4-flash "
     "opencode openrouter-pinned/minimax/minimax-m2.7 "
+    "opencode openrouter-pinned/qwen/qwen3.6-max-preview "
+    "opencode openrouter-pinned/qwen/qwen3.6-plus "
+    "opencode openrouter-pinned/qwen/qwen3.6-27b "
+    "opencode openrouter-pinned/xiaomi/mimo-v2.5-pro "
     # Routing notes:
+    # - claude-opus-4-7 at effort=max for parity with codex gpt-5.5 xhigh
+    #   (the highest CLI-exposed reasoning tier). Coding-plan billing means
+    #   no per-token cost lands on the API key; we still log token totals
+    #   from the transcript for cross-model comparison.
     # - DeepSeek + GLM: opencode hitting native lab APIs directly.
     # - MiniMax: api.minimaxi.com 401s on standard Bearer auth. Routed via
     #   OpenRouter pinned to provider="Minimax" (the lab) via extraBody —
     #   gets the lab's fp8 endpoint at $0.30/$1.20 per M, 99.7% uptime.
+    # - Qwen 3.6 family + MiMo via OpenRouter pinned to Alibaba / Xiaomi
+    #   (their native labs). qwen/qwen3.6-35b-a3b is NOT included — Alibaba
+    #   does not host it on OpenRouter; only AtlasCloud and Parasail serve
+    #   it (both fp8). Skipped to keep the native-lab-only integrity rule.
+    #   To include it later, add AtlasCloud to provider.order in opencode.
     # - ccr-claude is unreliable (returns malformed SSE shape to claude-code);
     #   codex 0.125.0 dropped chat-API support so non-OpenAI labs can't use codex.
 )

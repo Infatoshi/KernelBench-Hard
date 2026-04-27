@@ -1,8 +1,10 @@
 # KernelBench-Hard — Developer Instructions
 
-Last updated: 2026-04-24.
+Last updated: 2026-04-27.
 
-This file is for **coding agents editing the repo** (you, via Claude Code). Do not confuse with `problems/<X>/AGENT.md` — those are the system prompts fed to agents _under test_.
+This file is for **coding agents editing the repo** (you, via Claude Code). Do not confuse with `problems/<X>/PROMPT.txt` — those are the human-voice queries fed to agents _under test_.
+
+For the journey behind the current design, read [DEVLOG.md](./DEVLOG.md).
 
 ## What this repo is
 
@@ -15,7 +17,7 @@ See [SPEC.md](./SPEC.md) for methodology. See [README.md](./README.md) for the m
 - **uv only.** No bare `python`, no `pip`. Use `uv run ...`, `uv add ...`, `uv pip install ...`.
 - **Before committing:** `uv run ruff check . --fix && uv run pytest`.
 - **Never edit `problems/*/solution.py`**. Those files are agent output; they're gitignored for a reason. If you need to inspect one, read it from `outputs/runs/<run>/<problem>/solution.py`.
-- **Never modify `problems/*/reference.py`, `check.py`, `benchmark.py`, `problem.yaml`** once a sweep has been published. Those define the benchmark — changing them invalidates prior results.
+- **Never modify `problems/*/reference.py`, `check.py`, `benchmark.py`, `problem.yaml`, `shapes.py`, or `PROMPT.txt`** once a sweep has been published. Those define the benchmark — changing them invalidates prior results.
 - **torch.compile fix.** torch 2.11.0+cu130 has a broken inductor CSE typing annotation that breaks the compile baseline. Run `./scripts/patch_torch.sh` after every `uv sync`.
 
 ## Repo layout
@@ -29,11 +31,11 @@ KernelBench-Hard/
 │   └── NN_name/
 │       ├── reference.py       naive PyTorch, for correctness
 │       ├── sota.py            library call for the ceiling number
-│       ├── shapes.py          canonical shape list
+│       ├── shapes.py          canonical shape list (read by check.py / benchmark.py)
 │       ├── problem.yaml       metadata (flops, bytes, tolerance, forbidden ops)
 │       ├── check.py           correctness runner (per-dtype atol)
 │       ├── benchmark.py       roofline measurement: eager, compiled, sota, solution
-│       ├── AGENT.md           system prompt snippet for the agent under test
+│       ├── PROMPT.txt         human-voice query sent to the agent under test
 │       └── solution.py        agent output (gitignored)
 ├── src/
 │   ├── harness/               claude.py, codex.py, kimi.py, ccr_router.py
@@ -58,10 +60,10 @@ KernelBench-Hard/
    - `reference.py` — shortest naive PyTorch that produces the right answer. No optimization tricks. This is the correctness oracle.
    - `shapes.py` — 3 to 5 canonical shapes as a list of dicts. Include at least one "off-alignment" shape (e.g., K not multiple of 128 for GEMM).
    - `problem.yaml` — metadata. See `problems/01_fp8_gemm/problem.yaml` as the canonical example.
-   - `sota.py` — wrap the library function that defines the ceiling. If no library supports SM120 yet, leave a stub and document the H100 paper number in `AGENT.md`.
+   - `sota.py` — wrap the library function that defines the ceiling. If no library supports SM120 yet, leave a stub and document the H100 paper number in a comment.
    - `check.py` — copy from 01_fp8_gemm, change the import line for `reference` and `shapes`.
    - `benchmark.py` — copy from 01_fp8_gemm, change the throughput formula to match `problem.yaml.flops_formula` / `bytes_formula`.
-   - `AGENT.md` — one paragraph description + URLs + shape list + hardware note + 45min budget. No spoilers. No code.
+   - `PROMPT.txt` — single cohesive human-voice query. Match the structure of the existing seven: hardware in parenthetical on first line, file roles + "make a mess" allowance, op semantics + tolerance + every shape inlined as prose, custom-kernel mandate + forbidden ops list spelled out + suggested implementation paths + "look it up yourself" directive, flywheel sentence ending with "Take as long as you need to actually push the number up." Do not include peak throughput numbers, optimization recipes, or "you are being evaluated" framing.
 4. Smoke-test: `./scripts/run_hard.sh claude claude-opus-4-7 problems/NN_name` on a cheap model first. Verify `check.py` runs, `benchmark.py` runs, result.json is sane.
 5. Once you're happy, run the full model matrix sweep.
 

@@ -9,7 +9,7 @@ Summary of the non-negotiables:
 - **uv only.** `uv run ...`, `uv add ...`, `uv pip install ...`. Never `pip` or bare `python`.
 - **Before committing:** `uv run ruff check . --fix && uv run pytest`.
 - **Do not edit `problems/*/solution.py`** — those are agent output.
-- **Do not modify `reference.py`, `check.py`, `benchmark.py`, `problem.yaml`** of an already-published problem.
+- **Do not modify `reference.py`, `check.py`, `benchmark.py`, `problem.yaml`, `shapes.py`, or `PROMPT.txt`** of an already-published problem.
 - **Apply the torch 2.11 inductor CSE hotfix** via `./scripts/patch_torch.sh` after any `uv sync`.
 
 ## Quick actions

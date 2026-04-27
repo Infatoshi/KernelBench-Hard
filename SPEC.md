@@ -1,6 +1,6 @@
 # KernelBench-Hard: Design Specification
 
-Last updated: 2026-04-24.
+Last updated: 2026-04-27.
 
 ## Purpose
 
@@ -65,16 +65,24 @@ For kernels that can skip work (sparse MoE routing, attention with causal maskin
 - Agents cannot skip work and claim higher TFLOPS.
 - Example: MoE with 8 experts, top-2 routing, 32k tokens is scored as if every token × every expert. The agent's job is to be efficient at the dense-equivalent work, not to be a Pareto-frontier algorithm designer.
 
-## Link, don't spoil
+## Prompt design
 
-Each `problems/<X>/AGENT.md` contains:
-- A one-paragraph problem description.
-- URLs to the SOTA reference (repo + paper) — _not_ code.
-- The shape list and expected dtype.
-- Hardware gating and compiler flags.
-- The 45min budget.
+Each `problems/<X>/PROMPT.txt` is a single human-voice query that the harness sends directly to the agent under test. No system/user split, no preamble file, no markdown structure. The voice is "engineer assigning a real task to a coding partner" — not "evaluator instructing a test subject."
 
-Agents must navigate to the references themselves (`git clone`, `curl`, `gh api`, read source, grep). Navigation is part of what we measure.
+Each prompt contains:
+- Hardware identifier in a parenthetical on the first line (e.g., "RTX PRO 6000 (SM120 Blackwell, GDDR7, 1.8 TB/s)").
+- Pointers to `reference.py` and `solution.py`, plus an explicit allowance to make a mess in the directory as long as the final answer lands in `solution.py`.
+- Op semantics + correctness tolerance + every shape inlined as prose.
+- Custom-kernel mandate + forbidden ops listed by name + a "look it up yourself" directive (PTX docs, CUTLASS sources, library headers).
+- A flywheel sentence: implement, profile (ncu/nsys/torch.profiler), time it with benchmark.py, verify against check.py, iterate. Ends with "If check.py isn't passing, you're not done. Take as long as you need to actually push the number up."
+
+What is **not** in any prompt:
+- Peak throughput numbers, instruction recipes, or microarchitecture spec tables.
+- Optimization guidance ("use mma.sync block-scaled variants").
+- A wall-clock budget (the harness enforces timeout; the model has no concept of time).
+- "You are being evaluated" framing or "good luck" closers.
+
+Agents must navigate to references themselves (`git clone`, `curl`, `gh api`, read source, grep). Navigation is part of what we measure. The prompt names libraries by reputation only ("look up CUTLASS or sonic-moe or quack-kernels"); it does not URL-link them.
 
 ## Harness and tools
 
@@ -102,5 +110,5 @@ Checklist (see `CLAUDE.md` for the full procedure):
 4. Write `shapes.py` (canonical shape list, 3-5 entries).
 5. Write `problem.yaml` with metadata (regime, flops/bytes formulas, tolerance, forbidden ops, SOTA dep).
 6. Copy `check.py` and `benchmark.py` templates from an existing problem; parameterize for new inputs.
-7. Write `AGENT.md` with the problem brief and reference links.
+7. Write `PROMPT.txt` matching the voice and structure of the existing seven (see `## Prompt design` above).
 8. Run `./scripts/run_hard.sh claude claude-opus-4-7 problems/<NN>_<name>` as a smoke test.

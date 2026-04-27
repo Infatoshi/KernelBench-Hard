@@ -42,32 +42,29 @@ MODEL_SLUG="$(echo "$MODEL" | tr '/:[] ' '_')"
 RUN_DIR="${REPO_ROOT}/outputs/runs/${TIMESTAMP}_${HARNESS}_${MODEL_SLUG}_${PROBLEM_NAME}"
 mkdir -p "$RUN_DIR"
 
-# Wall clock budget: 45 minutes per run.
-BUDGET_SECONDS=2700
+# Wall clock budget: 45 minutes per run. Override via BUDGET_SECONDS env var
+# (e.g. BUDGET_SECONDS=300 for a quick smoke test).
+BUDGET_SECONDS="${BUDGET_SECONDS:-2700}"
 
-# --- Compose the system prompt for the agent under test -------------------
+# --- Load the per-problem prompt ------------------------------------------
 #
-# Two layers:
-#   1. Global preamble (hardware, toolchain, "link don't spoil" policy)
-#   2. Per-problem AGENT.md (specific brief, URLs, shapes)
-#
-# Concatenated into SYSTEM_PROMPT.md inside the problem dir. This file is
-# gitignored. The agent sees it as part of its working tree.
+# Each problem has a PROMPT.txt in human voice that combines the task brief,
+# shapes, forbidden ops, and workflow guidance into a single user-style
+# message. The harness sends this directly as the prompt to the agent. No
+# system/user split, no preamble concatenation.
 
-PREAMBLE_PATH="${REPO_ROOT}/src/harness/preamble.md"
-AGENT_MD="${PROBLEM_DIR}/AGENT.md"
-SYS_PROMPT="${PROBLEM_DIR}/SYSTEM_PROMPT.md"
-
-{
-    cat "$PREAMBLE_PATH"
-    echo
-    echo "---"
-    echo
-    cat "$AGENT_MD"
-} > "$SYS_PROMPT"
+PROMPT_FILE="${PROBLEM_DIR}/PROMPT.txt"
+if [ ! -f "$PROMPT_FILE" ]; then
+    echo "PROMPT.txt missing for $PROBLEM_NAME" >&2
+    exit 1
+fi
+PROMPT="$(cat "$PROMPT_FILE")"
 
 # --- Clean the problem workspace of any prior solution --------------------
-TEMPLATE_FILES=(reference.py sota.py shapes.py problem.yaml check.py benchmark.py AGENT.md SYSTEM_PROMPT.md)
+# problem.yaml and shapes.py stay in the workspace because check.py and
+# benchmark.py import them at runtime; the prompt does not direct the model
+# to read them.
+TEMPLATE_FILES=(reference.py sota.py shapes.py problem.yaml check.py benchmark.py PROMPT.txt)
 is_template() {
     local n="$1"
     for t in "${TEMPLATE_FILES[@]}"; do
@@ -87,8 +84,6 @@ done
 shopt -u nullglob dotglob
 
 # --- Run the harness ------------------------------------------------------
-
-PROMPT="Read SYSTEM_PROMPT.md first. It has hardware context and the problem brief. Then read reference.py, shapes.py, and problem.yaml. Write solution.py. Run check.py to verify correctness. Run benchmark.py to measure throughput. Iterate. Budget: 45 minutes wall clock."
 
 LOG_FILE="${RUN_DIR}/transcript.jsonl"
 STDERR_FILE="${RUN_DIR}/stderr.log"
@@ -110,13 +105,18 @@ HARNESS_EXIT=0
 
 case "$HARNESS" in
     claude)
+        EFFORT_ARG=()
+        if [ -n "$REASONING_EFFORT" ]; then
+            EFFORT_ARG=(--effort "$REASONING_EFFORT")
+        fi
         timeout "$BUDGET_SECONDS" claude \
             --dangerously-skip-permissions \
             --print --verbose \
             --output-format stream-json \
             --model "$MODEL" \
+            "${EFFORT_ARG[@]}" \
             --add-dir "$PROBLEM_DIR" \
-            -p "You are working in $PROBLEM_DIR. $PROMPT" \
+            -p "$PROMPT" \
             > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
         ;;
 
@@ -132,7 +132,7 @@ case "$HARNESS" in
                 --output-format stream-json \
                 --model "$MODEL" \
                 --add-dir "$PROBLEM_DIR" \
-                -p "You are working in $PROBLEM_DIR. $PROMPT" \
+                -p "$PROMPT" \
             > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
         ;;
 
@@ -267,6 +267,11 @@ if [ -f "$PROBLEM_DIR/solution.py" ]; then
     fi
 fi
 
+# Extract token usage from the transcript so we have an apples-to-apples
+# count for cost comparison even when the harness uses a coding-plan billing
+# (which hides per-call USD).
+USAGE_JSON="$(uv run --quiet python "$REPO_ROOT/scripts/extract_usage.py" "$RUN_DIR" "$HARNESS" 2>/dev/null || echo '{}')"
+
 cat > "$RUN_DIR/result.json" <<JSON
 {
     "problem": "$PROBLEM_NAME",
@@ -278,7 +283,8 @@ cat > "$RUN_DIR/result.json" <<JSON
     "peak_fraction": $SCORE,
     "elapsed_seconds": $ELAPSED,
     "harness_exit_code": $HARNESS_EXIT,
-    "session_complete": $SESSION_COMPLETE
+    "session_complete": $SESSION_COMPLETE,
+    "usage": $USAGE_JSON
 }
 JSON
 
@@ -309,7 +315,6 @@ for f in "$PROBLEM_DIR"/*; do
         rm -rf "$f"
     fi
 done
-rm -f "$PROBLEM_DIR/SYSTEM_PROMPT.md"
 shopt -u nullglob dotglob
 
 STATUS="ERR"
