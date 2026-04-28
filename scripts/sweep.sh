@@ -23,11 +23,11 @@ declare -a ACTIVE_MATRIX=(
     "opencode openrouter-pinned/minimax/minimax-m2.7 "
     "opencode openrouter-pinned/qwen/qwen3.6-max-preview "
     "opencode openrouter-pinned/qwen/qwen3.6-plus "
+    "opencode openrouter-pinned/qwen/qwen3.6-27b "
     "opencode openrouter-pinned/xiaomi/mimo-v2.5-pro "
-    # qwen3.6-27b dropped after 0/7 PASS in shakedown. Failure is compliance
-    # (acknowledges verification gate, doesn't act on it) + API hallucination
-    # (writes invented Triton/Python methods). Not a routing or harness issue.
-    # See DEVLOG. Route stays defined in opencode config; re-add is one line.
+    # qwen3.6-27b: 0/7 in pre-fix shakedown, 1/7 (sonic_moe 0.082) in post-fix
+    # rerun. High variance; either the workspace-leak fix helped focus it, or
+    # it's just LLM nondeterminism. N=1 too weak to tell. Same tier as MiniMax.
     # qwen3.6-35b-a3b dropped: AtlasCloud/Parasail (only providers serving
     # it) don't advertise tool-use to OpenRouter, so the agent harness can't
     # reach it. See DEVLOG.

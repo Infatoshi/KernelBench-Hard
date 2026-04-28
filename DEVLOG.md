@@ -70,7 +70,42 @@ Until full sandboxing lands, **opencode-routed numbers from before this commit r
 
 ---
 
-## 2026-04-27 — Qwen 3.6 27B: dropped from active matrix (capability + compliance)
+## 2026-04-27 — Qwen 3.6 27B: post-fix rerun reverses the drop
+
+After the leak fix landed, reran Qwen 3.6 27B on all 7 problems under the new permission policy. Result: **1/7 PASS** (sonic_moe_swiglu, peak_fraction 0.0822 — same tier as MiniMax M2.7's 0.076 on that problem) and dramatically more engagement across the board.
+
+| Problem | Pre-fix shakedown | Post-fix rerun |
+| --- | --- | --- |
+| 01 fp8_gemm | ERR | ERR |
+| 02 kda_cutlass | ERR (1-step bail) | FAIL (45 min, 28k output, has_solution) |
+| 03 paged_attention | FAIL (`__sqrt__` hallucination) | FAIL (different bug) |
+| 04 kahan_softmax | ERR | ERR (11 min bail) |
+| 05 topk_bitonic | ERR (token cap) | FAIL (45 min, 32k output) |
+| 06 sonic_moe_swiglu | ERR | **PASS 0.0822** |
+| 07 w4a16_gemm | ERR | ERR |
+
+Engagement shifted: immediate bails 4/7 → 2/7; solutions written 1/7 → 4/7; total token consumption rose ~10x (708k input / 9k output → 8.2M input / 91k output).
+
+### Why the change?
+
+Three honest possibilities:
+1. **Removing the leak forced focus.** Pre-fix, Qwen burned tool calls reading `src/hardware/rtx_pro_6000.py`, `src/eval/correctness.py`, `src/eval/timing.py`, `~/.claude/skills/perf-optim/SKILL.md`. Post-fix, those reads fail fast with an explicit denial, redirecting the model to focus on `reference.py` and write code.
+2. **LLM nondeterminism.** Same model, same prompt, runs 11 hours apart. DeepSeek Flash on TopK regressed from PASS to FAIL on a similar interval — variance is real on this benchmark.
+3. **Both.** Leak-fix vector is right (reducing rabbit-holing improves focus), but a 10x engagement swing and 0→1 PASS is hard to attribute purely to that.
+
+A controlled experiment (5x runs of each disposition, same conditions otherwise) would isolate the effect. Worth doing before any "leak fix improved Qwen 1/7 PASS" claim becomes load-bearing.
+
+### Decision
+
+Re-added to ACTIVE_MATRIX. Treat as same tier as MiniMax (functional but high-variance, low ceiling). Earlier "capability + compliance, dropped permanently" framing was a misread driven by N=1.
+
+### N=1 is not enough — methodology footnote
+
+Two reversals within 24 hours on this benchmark: Flash on TopK (PASS → FAIL) and Qwen 27B (0/7 → 1/7). Future official results should run N≥2 per (model, problem) and report variance. Reproducibility footnote in the shakedown entry already flagged this; second confirmation here.
+
+---
+
+## 2026-04-27 — Qwen 3.6 27B: dropped from active matrix (initial drop, see entry above for reversal)
 
 Forensic dive into the 0/7 result on the cheap-tier shakedown.
 
