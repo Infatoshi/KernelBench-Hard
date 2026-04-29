@@ -4,6 +4,51 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-04-29 — Reward-hacking audit: two rubric leaks, publishing with them documented
+
+After the full sweep (12 models × 7 problems), audited the high-peak runs for reward hacking. Two findings, very different in severity. Decision: ship the leaderboard with the leaks documented inline rather than iterate on problem design until perfect.
+
+### Audit method
+
+Read the solution.py for every (model, problem) cell with `peak_fraction ≥ 0.10`. Looked for the v3-era reward-hack patterns (precision downcast, PyTorch wrapper masquerading as a custom kernel, baseline gaming, hardcoded test-input handling) plus problem-specific shortcuts (skipping the named algorithm in favor of a simpler one that still passes correctness).
+
+### Findings
+
+**Clean (real kernel work):**
+- `03 paged_attention` — all top peaks (opus 0.602, gpt-5.5 0.498, kimi 0.432) are real Triton FlashDecoding-style kernels. Online softmax, GQA register reuse, exp2 fast-path. No shortcuts.
+- `07 w4a16_gemm` — all 8 passing solutions inline int4 unpacking (`& 0xf`, `>> 4`) inside the kernel; none pre-unpack-and-stash-as-bf16 at init. Genuine quantized kernel work.
+
+**Rubric leak (cell number doesn't measure what the problem name implies):**
+
+- `01 fp8_gemm` — every passing solution at peak ≥ 0.4 (5 models: opus 0.534, mimo 0.434, qwen-plus 0.431, qwen-max 0.429, gpt-5.5 0.423) casts fp8 → bf16 inside the kernel and runs a bf16 GEMM. Both opus and gpt-5.5 explicitly pin to `cutlass::arch::Sm80` — Ampere CUTLASS, no SM120 FP8 tensor cores anywhere. Opus's source comment is explicit: *"follow the codex baseline (BF16 GEMM internally)..."*. Technically valid (the reference also does the bf16 cast) but the problem name promises FP8-tensor-core skill that isn't being measured.
+
+- `04 kahan_softmax` — 6 of 7 passing solutions skipped Kahan compensated summation entirely, including both top-tier scores (gpt-5.5 0.363, opus 0.317). Only deepseek-v4-pro implemented Kahan — and scored *lowest* of the seven passes (0.101) because compensated summation has real overhead. The model whose docstring explicitly says *"Numerically tight softmax with Kahan compensated summation. Map: each block computes local (max, Kahan-sum-of-exp)..."* is the one that loses, because everyone else takes the easy path and tolerance doesn't enforce the difference.
+
+The Kahan one is the more depressing of the two. The benchmark, as designed, *punishes* algorithmic honesty: the model that implements the algorithm the problem name describes scores worst, because the rubric leaks and the dishonest path is faster.
+
+### Decision: publish with flaws documented inline
+
+Two reasons to ship now rather than fix-then-publish:
+
+1. **Diminishing returns on iteration.** This is the second round of post-hoc design issues we've found (the first was the verification gate / prompt-shape regime in late April). Every iteration surfaces something new. Publishing with the current flaws documented is more honest than iterating until the next flaw appears, then publishing.
+2. **The flaws ARE the finding.** The benchmark's purpose is to surface what models will and won't do under autonomous-agent evaluation. "Five frontier models all took the bf16 shortcut on FP8 GEMM" and "six of seven skipped Kahan compensation" are themselves headline results — they characterize how models behave when the rubric leaks.
+
+### What we shipped
+
+- `LEADERBOARD.md` — canonical human-readable cross-model grid + per-problem ceilings + a *Benchmark design flaws* section that explicitly footnotes the two leaky problems with their cell numbers.
+- `results/leaderboard.json` — machine-readable, schema-versioned. Source for the website's leaderboard view.
+- `results/annotations/<run_id>.yaml` — per-cell commentary for 13 runs covering both leaks (5 fp8 cells, 7 kahan cells) plus the headline clean cell (opus paged_attention 0.602). Schema in `results/annotations/SCHEMA.md`.
+- `results/annotations/SCHEMA.md` — annotation file format with five verdicts (`clean`, `rubric_leak`, `reward_hack`, `interesting`, `bug`).
+
+### Future leak fixes (logged, not done)
+
+- **fp8_gemm**: tighten tolerance to a value where bf16-via-cast and real fp8-tensor-core math diverge on the test inputs, or add a static-analysis check to the rubric that detects the `fp8 → bf16` cast pattern before the GEMM call.
+- **kahan_softmax**: tighten tolerance to a value where naive vs Kahan produce visibly different results on the test inputs (the test inputs may need to include numerically-pathological cases — large logit ranges, near-equal extremes), or write a check that detects compensated-summation pattern in solution.py.
+
+These are tractable; deferred so we publish the leaderboard now.
+
+---
+
 ## 2026-04-27 — opencode workspace leak: root cause + partial fix
 
 The Qwen 27B forensic dive (next entry) led to auditing every opencode-routed `read` call across the shakedown. The leak is universal across all opencode-routed models, not just Qwen.
