@@ -19,10 +19,22 @@ Sibling project to [KernelBench-v3](https://github.com/Infatoshi/KernelBench-v3)
 
 ## Hardware
 
-- **RTX PRO 6000 Blackwell Workstation** (SM120, 96GB GDDR7, 1.8 TB/s, ~200 BF16 / ~400 FP8 / ~800 FP4 TFLOPS dense)
-- **M4 Max** (Metal 3, unified memory) — for problem 08 only
+- **RTX PRO 6000 Blackwell Workstation** (SM120, 96GB GDDR7, 1.8 TB/s, ~200 BF16 / ~400 FP8 / ~800 FP4 TFLOPS dense) — primary leaderboard track.
+- **RTX 5080** (SM120, 16GB GDDR7, 960 GB/s, ~140 BF16 / ~280 FP8 / ~560 FP4 TFLOPS dense) — secondary SM120 track for consumer Blackwell. Same ISA as the PRO 6000 (kernels port without rewrites). BF16 peak empirically anchored from a cuBLAS 4K^3 measurement on the actual card; other dtypes scaled by standard tensor-core ratios. Run as a separate column — peak fractions are not comparable across hardware tracks.
+- **M4 Max** (Metal 3, unified memory) — for problem 08 only.
 
 Required: CUDA 13.x (symlink `/usr/local/cuda-13`), torch 2.11+cu130, Python 3.11+.
+
+### Selecting a hardware track
+
+By default the harness uses the first entry in each problem's `hardware:` list (currently `RTX_PRO_6000` for problems 01–07, `M4_MAX` for 08). To run on a different declared target, set `KERNELBENCH_HARDWARE`:
+
+```bash
+# Run problem 04 on the 5080 track (peak fractions normalized to 5080 peaks)
+KERNELBENCH_HARDWARE=RTX_5080 ./scripts/run_hard.sh claude claude-opus-4-7 problems/04_kahan_softmax
+```
+
+The override must appear in the problem's `hardware:` list — running on an unsupported target is an explicit error, not a silent fallback.
 
 ## Active model matrix
 

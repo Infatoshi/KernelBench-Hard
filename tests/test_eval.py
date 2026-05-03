@@ -4,7 +4,7 @@ import torch
 
 from src.eval.correctness import check_correctness, tolerance_for_dtype
 from src.eval.roofline import compute_gbps, compute_tflops, peak_fraction
-from src.hardware import get
+from src.hardware import ENV_VAR, get, select
 
 
 def test_tolerance_defaults():
@@ -73,3 +73,46 @@ def test_hardware_lookup():
     assert hw.sm == "sm_120a"
     assert hw.peak_bandwidth_gb_s == pytest.approx(1800.0)
     assert hw.peak_tflops_dense["fp8"] == pytest.approx(400.0)
+
+
+def test_hardware_lookup_5080():
+    hw = get("RTX_5080")
+    assert hw.sm == "sm_120a"
+    assert hw.vram_gb == 16
+    # GDDR7 256-bit @ 30 Gbps
+    assert hw.peak_bandwidth_gb_s == pytest.approx(960.0)
+    # Lower than PRO 6000 across the board.
+    pro = get("RTX_PRO_6000")
+    for dtype in ("fp4", "fp8", "bf16"):
+        assert hw.peak_tflops_dense[dtype] < pro.peak_tflops_dense[dtype]
+
+
+def test_select_default_uses_first_entry(monkeypatch):
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    meta = {"hardware": ["RTX_PRO_6000", "RTX_5080"]}
+    assert select(meta).name == get("RTX_PRO_6000").name
+
+
+def test_select_env_override(monkeypatch):
+    monkeypatch.setenv(ENV_VAR, "RTX_5080")
+    meta = {"hardware": ["RTX_PRO_6000", "RTX_5080"]}
+    assert select(meta).name == get("RTX_5080").name
+
+
+def test_select_env_override_unknown(monkeypatch):
+    monkeypatch.setenv(ENV_VAR, "BOGUS_GPU")
+    meta = {"hardware": ["RTX_PRO_6000", "RTX_5080"]}
+    with pytest.raises(ValueError, match="not a known hardware target"):
+        select(meta)
+
+
+def test_select_env_override_unsupported_by_problem(monkeypatch):
+    monkeypatch.setenv(ENV_VAR, "M4_MAX")
+    meta = {"hardware": ["RTX_PRO_6000", "RTX_5080"]}
+    with pytest.raises(ValueError, match="not in this problem's supported"):
+        select(meta)
+
+
+def test_select_missing_hardware_list():
+    with pytest.raises(ValueError, match="missing a non-empty"):
+        select({})

@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.eval.roofline import compute_gbps, compute_tflops, peak_fraction  # noqa: E402
 from src.eval.timing import time_fn  # noqa: E402
-from src.hardware import get as get_hw  # noqa: E402
+from src.hardware import select as select_hw  # noqa: E402
 
 
 def _eval_formula(expr: str, vars: dict) -> float:
@@ -38,7 +38,7 @@ def main():
     import solution
 
     meta = yaml.safe_load(Path("problem.yaml").read_text())
-    hw = get_hw(meta["hardware"][0])
+    hw = select_hw(meta)
     peak_tflops = hw.peak_tflops_dense.get(meta["peak_tflops_key"], 0.0)
     peak_gbps = hw.peak_bandwidth_gb_s
     regime = meta.get("regime", "compute")

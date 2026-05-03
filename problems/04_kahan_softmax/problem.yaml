@@ -9,7 +9,7 @@ flops_formula: "5 * batch * vocab"
 # Bytes moved: read x once, write y once. Both fp32.
 bytes_formula: "batch * vocab * 4 + batch * vocab * 4"
 
-hardware: [RTX_PRO_6000]
+hardware: [RTX_PRO_6000, RTX_5080]
 peak_tflops_key: fp32
 peak_bandwidth_key: dram
 
