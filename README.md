@@ -4,6 +4,10 @@ Surgical GPU kernel benchmark. 7 carefully-chosen problems, frontier coding agen
 
 Sibling project to [KernelBench-v3](https://github.com/Infatoshi/KernelBench-v3) (volume-oriented; local open-weight models). Hard is for frontier-model harnesses on a small, high-signal deck.
 
+## PR policy
+
+This repository is published for transparency: it documents the exact prompts, harnesses, traces, kernels, and scoring code I use to evaluate models. It is not an open benchmark track, and I am not accepting PRs that change the problems, hardware target, scoring, prompts, or results. Issues and forks are welcome for discussion or independent experiments, but the canonical repo stays fixed so the published comparisons remain reproducible.
+
 ## Problem deck
 
 | # | Problem | Hardware | What it tests |
