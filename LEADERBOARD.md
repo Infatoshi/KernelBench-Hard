@@ -2,6 +2,8 @@
 
 Hardware: **RTX PRO 6000 Blackwell Workstation** (sm_120, 96 GB GDDR7, 1.8 TB/s peak DRAM bandwidth).
 
+> Secondary **RTX 5080** track (sm_120, 16 GB GDDR7, 960 GB/s, ~0.45× PRO 6000 peaks) is supported by the harness but not yet swept. Peak fractions for the two tracks are independently normalized and not comparable across columns. See `README.md → Hardware → Selecting a hardware track` for the `KERNELBENCH_HARDWARE` override.
+
 **12 models × 7 problems = 84 runs.** Cells show `peak_fraction` of the published throughput peak (1.0 = saturating the relevant tensor-core or memory bandwidth limit) when the model produced a correct solution; `FAIL` if a solution was written but failed correctness; `ERR` if no solution was produced.
 
 Annotations (`★`) attached to specific cells live in `results/annotations/<run_id>.yaml`. Two cell verdicts mean the cell number doesn't measure what the problem name implies — see the **Benchmark design flaws** section below.

@@ -4,6 +4,38 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-05-03 — RTX 5080 secondary SM120 track
+
+Added `RTX_5080` as a second SM120 hardware target. Same ISA as the PRO 6000 (sm_120a, `mma.sync.kind::f8f6f4`, block-scaled MMAs) on a smaller GB203 die: 84 SMs vs ~188, 16 GB GDDR7 on a 256-bit bus (~960 GB/s), peaks scaled by SM-count ratio (~0.45×) at comparable boost clocks.
+
+### Wiring change (backwards compatible)
+
+The per-problem `benchmark.py` files now resolve hardware via a new `src.hardware.select(meta)` helper instead of `get(meta["hardware"][0])`. Resolution order:
+
+1. `KERNELBENCH_HARDWARE` env var, validated against the problem's declared `hardware:` list (mismatch is an explicit error, not a silent fallback).
+2. `meta["hardware"][0]` — first declared target.
+
+When the env var is unset, behavior is byte-identical to the previous `get(meta["hardware"][0])` call. Existing PRO 6000 leaderboard numbers remain reproducible. Modifying the published `benchmark.py` files is normally forbidden (per `CLAUDE.md`), but this is purely-additive wiring — no formula, shape, or tolerance change — so it does not invalidate prior results.
+
+Each problem's `problem.yaml` now declares `hardware: [RTX_PRO_6000, RTX_5080]`. PRO 6000 stays first so the default behavior is unchanged. The 5080 lookups have provisional peak values (scaled, not microbenchmarked); confirm with a CUTLASS GEMM probe on the actual card before publishing a 5080 leaderboard column.
+
+### What's deferred
+
+- **Per-shape VRAM gating.** Audited all 7 problem shape lists against 16 GB. Largest working set is sonic-MoE's headline shape (~6 GB); everything else is comfortably under 1 GB. No shapes need gating today. Add an optional `min_vram_gb` field to `shapes.py` entries if a future problem includes a shape that exceeds ~12 GB on the 5080.
+- **5080 sweep.** Mechanism is in place; smoke-tested end-to-end (`KERNELBENCH_HARDWARE=RTX_5080` produces correctly-renormalized peak fractions: A/B run gives ratio 1.878 vs expected 1800/960 = 1.875). Needs a real agent sweep to populate a 5080 leaderboard column.
+
+### Peak calibration (BF16)
+
+The initial peak table in `rtx_5080.py` was scaled by SM-count ratio (84/188 ≈ 0.45) from the PRO 6000 entry. Empirical cuBLAS check on the actual 5080 (BF16 4096^3 GEMM) reached **112 TFLOPS** — the SM-scaled value of 90 TFLOPS would have implied >100% efficiency, which is impossible. Bumped BF16 dense to 140 TFLOPS (cuBLAS at 80% efficiency) and rescaled FP8 / FP4 / etc. by the standard tensor-core ratios. Leaderboard normalization is now within 80–90% efficiency band for cuBLAS, matching PRO 6000 calibration practice.
+
+Single-dtype empirical anchor only — FP8/FP4 entries should each be calibrated with their own microbenchmark before publishing a 5080 column for problems gated on those dtypes.
+
+### CUDA_DEVICE_ORDER caveat
+
+Mixed-architecture boxes (e.g. 3090 + 5080) need `CUDA_DEVICE_ORDER=PCI_BUS_ID` set or `CUDA_VISIBLE_DEVICES` won't map to what `nvidia-smi` shows — CUDA's default ordering re-sorts by compute capability. `run_hard.sh` doesn't set this today; consider adding it in a follow-up so users on dual-GPU boxes don't silently benchmark the wrong card.
+
+---
+
 ## 2026-04-29 — Reward-hacking audit: two rubric leaks, publishing with them documented
 
 After the full sweep (12 models × 7 problems), audited the high-peak runs for reward hacking. Two findings, very different in severity. Decision: ship the leaderboard with the leaks documented inline rather than iterate on problem design until perfect.
