@@ -9,6 +9,7 @@
 #   ./scripts/run_hard.sh codex gpt-5.5 problems/01_fp8_gemm xhigh
 #   ./scripts/run_hard.sh kimi kimi-k2.6 problems/01_fp8_gemm
 #   ./scripts/run_hard.sh droid glm-5.1 problems/01_fp8_gemm
+#   ./scripts/run_hard.sh zai-claude glm-5.1 problems/01_fp8_gemm
 #   ./scripts/run_hard.sh ccr-claude glm-5.1 problems/01_fp8_gemm
 #
 # Archives everything to outputs/runs/<ts>_<harness>_<model>_<problem>/.
@@ -137,6 +138,35 @@ case "$HARNESS" in
             > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
         ;;
 
+    zai-claude)
+        # Claude Code routed directly to Z.ai's Anthropic-compatible endpoint.
+        # Use Claude Code's built-in model aliases and map them to Z.ai model IDs.
+        # Passing --model glm-5.1 directly can hit Claude Code model-access checks.
+        # Requires ZAI_API_KEY in the environment or ~/.env_vars.
+        if [ -z "${ZAI_API_KEY:-}" ]; then
+            echo "ZAI_API_KEY is required for zai-claude" >&2
+            exit 1
+        fi
+        ZAI_CLAUDE_ALIAS="${ZAI_CLAUDE_ALIAS:-opus}"
+        ZAI_CLAUDE_HAIKU_MODEL="${ZAI_CLAUDE_HAIKU_MODEL:-glm-4.5-air}"
+        timeout "$BUDGET_SECONDS" \
+            env \
+                ANTHROPIC_AUTH_TOKEN="$ZAI_API_KEY" \
+                ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" \
+                API_TIMEOUT_MS="${API_TIMEOUT_MS:-3000000}" \
+                ANTHROPIC_DEFAULT_HAIKU_MODEL="$ZAI_CLAUDE_HAIKU_MODEL" \
+                ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL" \
+                ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL" \
+            claude \
+                --dangerously-skip-permissions \
+                --print --verbose \
+                --output-format stream-json \
+                --model "$ZAI_CLAUDE_ALIAS" \
+                --add-dir "$PROBLEM_DIR" \
+                -p "$PROMPT" \
+            > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
+        ;;
+
     codex)
         EFFORT_ARG=()
         if [ -n "$REASONING_EFFORT" ]; then
@@ -203,7 +233,7 @@ case "$HARNESS" in
 
     *)
         echo "Unknown harness: $HARNESS" >&2
-        echo "Supported: claude, ccr-claude, codex, kimi, droid, opencode" >&2
+        echo "Supported: claude, zai-claude, ccr-claude, codex, kimi, droid, opencode" >&2
         exit 1
         ;;
 esac
@@ -215,7 +245,7 @@ ELAPSED=$((END_TIME - START_TIME))
 #
 # A run is INCOMPLETE if the harness exited from SIGTERM (timeout=124) OR if
 # the transcript is missing its terminal marker. Markers per harness:
-#   claude / ccr-claude:  {"type":"result"} (final summary with usage)
+#   claude / zai-claude / ccr-claude:  {"type":"result"} (final summary with usage)
 #   codex:                {"payload":{"type":"task_complete"}}
 #   cursor:               {"type":"result"} (final usage block)
 #   droid:                exit code only; stream has init/message/error events
@@ -232,7 +262,7 @@ fi
 
 SESSION_COMPLETE=true
 case "$HARNESS" in
-    claude|ccr-claude|cursor)
+    claude|zai-claude|ccr-claude|cursor)
         if ! grep -q '"type":"result"' "$CHECK_FILE" 2>/dev/null; then
             SESSION_COMPLETE=false
         fi

@@ -24,6 +24,8 @@ Claude Code was attempted only against Z.ai, not Anthropic: first through `ccr-r
 
 Website changes from this rerun: add Droid harness support to `scripts/run_hard.sh`, add Droid usage extraction, render all 18 May 8 transcript viewers, and publish two additional leaderboard rows: `opencode/zai/glm-5.1 [2026-05-08]` and `droid/zai/glm-5.1 [2026-05-08]`. This preserves the original public GLM row while making the rerun evidence explicit.
 
+Follow-up smoke tests found the Claude Code wiring bug: Z.ai exposes a separate Anthropic-compatible endpoint for Claude Code, `https://api.z.ai/api/anthropic`. The earlier direct attempt used the OpenAI-compatible coding endpoint, `https://api.z.ai/api/coding/paas/v4`, which is the right shape for Droid/Factory but the wrong shape for Claude Code. `scripts/run_hard.sh` now has a `zai-claude` harness that sets `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`, maps Claude Code's `opus`/`sonnet` aliases to `glm-5.1`, and leaves `ccr-claude` as the historical proxy path. One-turn smoke results: `zai-claude` returned `KB_SMOKE_OK` through model `glm-5.1`; Droid's existing `custom:GLM-5.1-[Z.AI-Coding-Plan]-0` also returned `KB_SMOKE_OK`. Droid was already hooked up correctly; its four benchmark ERR cells were 45-minute incomplete runs with no `solution.py`, not API failures.
+
 ---
 
 ## 2026-04-30 — Launch prep: monorepo, kernelbench.com, transcript viewers, blog plots

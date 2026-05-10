@@ -38,6 +38,8 @@ One harness per model, each pinned to the highest-fidelity native endpoint.
 | GPT-5.5 xhigh | `codex` (`-c model_reasoning_effort="xhigh"`) | OpenAI direct (npm `@openai/codex`) |
 | Kimi K2.6 | `kimi` | Moonshot direct (api.moonshot.cn) |
 | GLM-5.1 | `opencode zai/glm-5.1` | Z.AI direct (api.z.ai) |
+| GLM-5.1 | `zai-claude glm-5.1` | Z.AI Anthropic-compatible endpoint (`api.z.ai/api/anthropic`) |
+| GLM-5.1 | `droid custom:GLM-5.1-[Z.AI-Coding-Plan]-0` | Z.AI OpenAI-compatible coding endpoint via Factory |
 | Minimax M2.7 | `opencode openrouter-pinned/minimax/minimax-m2.7` | OpenRouter pinned to Minimax lab (fp8) |
 | DeepSeek V4 Pro | `opencode deepseek/deepseek-v4-pro` | DeepSeek direct (api.deepseek.com) |
 | DeepSeek V4 Flash | `opencode deepseek/deepseek-v4-flash` | DeepSeek direct (api.deepseek.com) |

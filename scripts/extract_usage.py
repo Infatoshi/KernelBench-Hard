@@ -8,10 +8,10 @@ Emits a JSON object on stdout with normalized fields:
     cache_creation_tokens, reasoning_tokens, total_cost_usd
 
 Any field that is not reported by the given harness is null. The point is a
-single uniform shape across claude / codex / kimi / droid / opencode so result.json
-aggregation is cheap downstream. Coding-plan billing on the CLI does not
-expose per-token cost; transcripts still report the raw token counts, which
-is what matters for cross-model comparison.
+single uniform shape across claude / zai-claude / codex / kimi / droid /
+opencode so result.json aggregation is cheap downstream. Coding-plan billing
+on the CLI does not expose per-token cost; transcripts still report the raw
+token counts, which is what matters for cross-model comparison.
 """
 from __future__ import annotations
 
@@ -178,7 +178,7 @@ def extract(run_dir: Path, harness: str) -> dict:
             events = _read_jsonl(run_dir / "transcript.jsonl")
         return _codex(events)
     transcript = _read_jsonl(run_dir / "transcript.jsonl")
-    if harness in ("claude", "ccr-claude", "kimi", "cursor"):
+    if harness in ("claude", "zai-claude", "ccr-claude", "kimi", "cursor"):
         return _claude_or_kimi(transcript)
     if harness == "droid":
         return _droid(transcript)
