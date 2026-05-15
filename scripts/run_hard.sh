@@ -85,6 +85,63 @@ for f in "$PROBLEM_DIR"/*; do
 done
 shopt -u nullglob dotglob
 
+# Snapshot immutable problem files. Agents may make a mess in the problem
+# directory, but changing benchmark definitions invalidates the run and must not
+# leak into the next problem.
+TEMPLATE_BACKUP_DIR="$RUN_DIR/template_files"
+mkdir -p "$TEMPLATE_BACKUP_DIR"
+for t in "${TEMPLATE_FILES[@]}"; do
+    if [ -e "$PROBLEM_DIR/$t" ]; then
+        cp -p "$PROBLEM_DIR/$t" "$TEMPLATE_BACKUP_DIR/$t"
+    fi
+done
+
+TEMPLATE_MUTATED=false
+
+detect_template_mutation() {
+    local phase="$1"
+    local found=0
+    local log="$RUN_DIR/template_mutations.log"
+    for t in "${TEMPLATE_FILES[@]}"; do
+        local orig="$TEMPLATE_BACKUP_DIR/$t"
+        local cur="$PROBLEM_DIR/$t"
+        if [ -e "$orig" ] && [ -e "$cur" ]; then
+            if ! cmp -s "$orig" "$cur"; then
+                if [ "$found" -eq 0 ]; then
+                    printf 'phase: %s\n' "$phase" >> "$log"
+                fi
+                found=1
+                printf 'MUTATED: %s\n' "$t" >> "$log"
+                diff -u --label "before/$t" --label "after/$t" "$orig" "$cur" >> "$log" 2>&1 || true
+            fi
+        elif [ -e "$orig" ] && [ ! -e "$cur" ]; then
+            if [ "$found" -eq 0 ]; then
+                printf 'phase: %s\n' "$phase" >> "$log"
+            fi
+            found=1
+            printf 'DELETED: %s\n' "$t" >> "$log"
+        elif [ ! -e "$orig" ] && [ -e "$cur" ]; then
+            if [ "$found" -eq 0 ]; then
+                printf 'phase: %s\n' "$phase" >> "$log"
+            fi
+            found=1
+            printf 'CREATED TEMPLATE FILE: %s\n' "$t" >> "$log"
+        fi
+    done
+    return "$found"
+}
+
+restore_template_files() {
+    for t in "${TEMPLATE_FILES[@]}"; do
+        local orig="$TEMPLATE_BACKUP_DIR/$t"
+        local cur="$PROBLEM_DIR/$t"
+        rm -rf "$cur"
+        if [ -e "$orig" ]; then
+            cp -p "$orig" "$cur"
+        fi
+    done
+}
+
 # --- Run the harness ------------------------------------------------------
 
 LOG_FILE="${RUN_DIR}/transcript.jsonl"
@@ -148,12 +205,15 @@ case "$HARNESS" in
             exit 1
         fi
         ZAI_CLAUDE_ALIAS="${ZAI_CLAUDE_ALIAS:-opus}"
-        ZAI_CLAUDE_HAIKU_MODEL="${ZAI_CLAUDE_HAIKU_MODEL:-glm-4.5-air}"
+        ZAI_CLAUDE_HAIKU_MODEL="${ZAI_CLAUDE_HAIKU_MODEL:-$MODEL}"
         timeout "$BUDGET_SECONDS" \
             env \
                 ANTHROPIC_AUTH_TOKEN="$ZAI_API_KEY" \
                 ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" \
                 API_TIMEOUT_MS="${API_TIMEOUT_MS:-3000000}" \
+                CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS="${CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS:-1}" \
+                CLAUDE_CODE_MAX_RETRIES="${CLAUDE_CODE_MAX_RETRIES:-1000000}" \
+                CLAUDE_CODE_MAX_OUTPUT_TOKENS="${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-128000}" \
                 ANTHROPIC_DEFAULT_HAIKU_MODEL="$ZAI_CLAUDE_HAIKU_MODEL" \
                 ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL" \
                 ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL" \
@@ -162,6 +222,7 @@ case "$HARNESS" in
                 --print --verbose \
                 --output-format stream-json \
                 --model "$ZAI_CLAUDE_ALIAS" \
+                --disallowedTools ExitPlanMode EnterPlanMode AskUserQuestion \
                 --add-dir "$PROBLEM_DIR" \
                 -p "$PROMPT" \
             > "$LOG_FILE" 2> "$STDERR_FILE" || HARNESS_EXIT=$?
@@ -295,22 +356,45 @@ HAS_SOLUTION=false
 CORRECT=false
 SCORE="null"
 
+if ! detect_template_mutation "after harness"; then
+    TEMPLATE_MUTATED=true
+    echo "FAIL: immutable problem files changed by harness; skipping check.py and benchmark.py."
+    restore_template_files
+fi
+
 if [ -f "$PROBLEM_DIR/solution.py" ]; then
     HAS_SOLUTION=true
+fi
+
+if [ "$TEMPLATE_MUTATED" = "false" ] && [ "$HAS_SOLUTION" = "true" ]; then
     CHECK_LOG="$RUN_DIR/check.log"
     BENCH_LOG="$RUN_DIR/benchmark.log"
 
     echo "Running check.py..."
     (cd "$PROBLEM_DIR" && timeout 180 uv run python check.py) > "$CHECK_LOG" 2>&1 || true
 
-    if grep -q "^PASS" "$CHECK_LOG"; then
+    if ! detect_template_mutation "after check.py"; then
+        TEMPLATE_MUTATED=true
+        CORRECT=false
+        SCORE="null"
+        echo "FAIL: immutable problem files changed during check.py."
+        restore_template_files
+    elif grep -q "^PASS" "$CHECK_LOG"; then
         CORRECT=true
         echo "Running benchmark.py..."
         # Some problems (KDA chunked recurrence, large-vocab softmax, sonic-MoE)
         # have references that loop in Python, so 20 perf trials × 4 variants ×
         # 5 shapes can take 5-10 min. Generous budget.
         (cd "$PROBLEM_DIR" && timeout 1800 uv run python benchmark.py) > "$BENCH_LOG" 2>&1 || true
-        SCORE=$(grep -oP 'peak_fraction:\s*\K[0-9.]+' "$BENCH_LOG" | head -1 || echo "null")
+        if ! detect_template_mutation "after benchmark.py"; then
+            TEMPLATE_MUTATED=true
+            CORRECT=false
+            SCORE="null"
+            echo "FAIL: immutable problem files changed during benchmark.py."
+            restore_template_files
+        else
+            SCORE=$(grep -oP 'peak_fraction:\s*\K[0-9.]+' "$BENCH_LOG" | head -1 || echo "null")
+        fi
     fi
 fi
 
@@ -328,6 +412,7 @@ cat > "$RUN_DIR/result.json" <<JSON
     "has_solution": $HAS_SOLUTION,
     "correct": $CORRECT,
     "peak_fraction": $SCORE,
+    "template_mutated": $TEMPLATE_MUTATED,
     "elapsed_seconds": $ELAPSED,
     "harness_exit_code": $HARNESS_EXIT,
     "session_complete": $SESSION_COMPLETE,
@@ -367,6 +452,8 @@ shopt -u nullglob dotglob
 STATUS="ERR"
 if $CORRECT; then
     STATUS="OK score=$SCORE"
+elif [ "$TEMPLATE_MUTATED" = "true" ]; then
+    STATUS="INVALID (problem files changed)"
 elif $HAS_SOLUTION; then
     STATUS="FAIL (check failed)"
 fi
