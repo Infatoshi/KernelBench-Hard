@@ -4,6 +4,43 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-05-28 - Opus 4.8 and Grok Build addendum
+
+Added Anvil `grok` CLI support using model `grok-build` and the top-level
+headless streaming JSON route. Also added a Grok transcript viewer parser so
+run archives render correctly in `src.viewer`.
+
+Run group:
+
+```text
+kbh_opus48_grok_full_20260528_125852
+```
+
+The addendum drained cleanly after the old temporary launcher exposed a wait
+bug: 14 manifest rows, 14 `result.json` rows, 0 running, and 0
+exited-without-result. `scripts/launch_parallel_sweep.sh` has since been fixed
+to keep child jobs waitable. Claude Opus 4.8 used `--effort max` with fast mode
+disabled. Grok Build completed all seven rows through the new harness path.
+
+Claude Opus 4.8 passed six of seven CUDA rows plus KDA correctness:
+`01_fp8_gemm` 0.5332, `03_paged_attention` 0.6517, `04_kahan_softmax` 0.3517,
+`05_topk_bitonic` 0.0462, `06_sonic_moe_swiglu` 0.2507, and
+`07_w4a16_gemm` 0.1127. `02_kda_cutlass` passed correctness but timed out in
+the benchmark phase.
+
+Grok Build passed `04_kahan_softmax` at 0.0373 and passed KDA correctness but
+timed out in benchmark. The remaining Grok rows wrote checkable solutions that
+failed correctness.
+
+Summary artifacts:
+
+```text
+outputs/sweeps/kbh_opus48_grok_full_20260528_125852/summary/summary.json
+outputs/sweeps/kbh_opus48_grok_full_20260528_125852/summary/summary.latest.json
+```
+
+---
+
 ## 2026-05-23 - Lock-timeout and workspace stress fix
 
 `check.py` and `benchmark.py` now acquire `outputs/gpu.lock` before their
