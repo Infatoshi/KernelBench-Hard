@@ -4,6 +4,267 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-05-23 - Lock-timeout and workspace stress fix
+
+`check.py` and `benchmark.py` now acquire `outputs/gpu.lock` before their
+execution timeout starts. The previous `timeout 180 uv run python check.py`
+shape let lock wait consume the correctness budget, which made queued rows look
+like model failures. The new `run_gpu_locked_timeout` path wraps `timeout`
+inside the lock holder and classifies execution timeouts as
+`check_timeout`/`benchmark_timeout` retryable rows instead of plain
+`check_failed`.
+
+Claude-family harnesses now `cd "$PROBLEM_DIR"` before launching Claude Code.
+The old repo-root cwd plus `--add-dir "$PROBLEM_DIR"` was enough for some runs
+to spend huge token budgets writing `problems/<name>/solution.py` in the source
+tree while the archive-local workspace had no `solution.py`.
+
+Stress test `stress_lock_fix_20260523_230809` used fake `kimi`/`claude`
+binaries to avoid API spend. A fake Kimi run waited four seconds on the GPU
+lock with `KBH_CHECK_TIMEOUT_SECONDS=1` and still passed after the lock opened;
+six concurrent fake Kimi rows got unique archive directories and passed; fake
+Claude proved its cwd was the archive-local
+`outputs/runs/.../repo/problems/99_lock_stress` directory. Source-tree leaked
+solutions/scratch were preserved under
+`outputs/tmp/source_contamination_20260523_230921` and removed from
+`problems/`.
+
+---
+
+## 2026-05-23 - Classified resweep fixes
+
+The resweep launcher now has one worker per harness instead of a problem-major
+outer loop. The original per-harness cap prevented more than two sessions per
+harness, but it still head-of-line blocked when the next row belonged to a busy
+harness. With workers, Cursor/Gemini/OpenCode can backfill their own next
+problem while Codex or Claude remains busy.
+
+OpenRouter was depleted during resweep setup, so the current classified rerun
+uses:
+
+```sh
+KBH_SKIP_OPENROUTER=1 KBH_USE_DIRECT_GEMINI=1 KBH_HARNESS_CONCURRENCY=2
+```
+
+That runs Codex GPT-5.5, Claude Opus 4.7, Z.ai GLM-5.1 through both Claude
+Code and OpenCode, Cursor Composer 2.5 Fast, and direct Gemini 3.5 Flash. Qwen
+3.7 Max remains blocked until OpenRouter is topped up or a direct provider key
+is added.
+
+Aborted sweeps can leave orphaned harness timeout groups because some CLIs
+spawn new process groups below `run_hard.sh`. Before restarting, kill by cwd
+under `KernelBench-Hard` / `outputs/runs/<run_prefix>` and verify
+`nvidia-smi --query-compute-apps` is empty.
+
+Also fixed a failure-classifier false positive: matching plain `overage` marked
+normal Cursor transcript text containing `coverage` as
+`provider_insufficient_credits`. Credit detection is now limited to explicit
+credit/balance/payment phrases and only applies when no solution was produced.
+This matters because Cursor can quote old `result.json` files in otherwise
+successful-session transcripts.
+
+---
+
+## 2026-05-23 - Guarded parallel sweep logging
+
+The guarded parallel sweep now records enough metadata for website use:
+agent wall time, total/check/benchmark wall time, harness/check/benchmark exit
+codes, session completeness, CUDA-guard state, parsed token/cache/reasoning
+usage, output tokens/sec, and GPU lock wait/active totals from
+`scripts/summarize_runs.py`.
+
+Current sweep group:
+
+```text
+kbh_hard_parallel_guarded_20260523_003820
+```
+
+The lock intentionally catches `uv`, `python`, `python3`, `nvidia-smi`, `ncu`,
+`nsys`, and `nvcc` from agent workspaces. This is conservative: CPU-only probes
+such as `python -c import triton` may wait behind a harness-owned benchmark.
+That is acceptable for the guarded sweep because the invariant is stronger:
+agent editing phases can overlap, while CUDA-facing compile/check/benchmark
+work serializes through `outputs/gpu.lock`.
+
+After observing Z.ai rows waiting behind a Qwen `benchmark.py` for harmless
+`python -c import triton` probes, the wrapper was relaxed for future runs:
+when `KBH_AGENT_PHASE=1`, `uv`/`python`/`python3` bypass the lock. CUDA remains
+hidden with `CUDA_VISIBLE_DEVICES=` plus the `sitecustomize.py` torch guard, so
+agent edit-phase Python can inspect syntax/imports without queueing behind GPU
+benchmarks. Harness-owned post-run `check.py` and `benchmark.py` still run
+outside `KBH_AGENT_PHASE` and therefore serialize through the lock.
+The CPU-only transcript usage extraction path also bypasses the lock now, so
+completed rows do not queue behind unrelated GPU benchmarks just to parse token
+counts.
+
+---
+
+## 2026-05-22 - Parallel-safe workspaces and Cursor Agent smoke
+
+`scripts/run_hard.sh` now creates an archive-local repo-shaped workspace for
+every run:
+
+```text
+outputs/runs/<run_id>/repo/problems/<problem_name>/
+```
+
+Only the immutable problem template files are copied into that workspace. The
+workspace gets a symlink to the real `src/` plus copied `pyproject.toml`,
+`uv.lock`, and `.python-version`, so `check.py` / `benchmark.py` still see a
+repo root two parents up while agents can mutate dependencies or scratch files
+without touching the source `problems/*` directory. This fixes the parallel run
+hazard where two agents on the same problem could delete or overwrite each
+other's `solution.py`.
+
+Added a `cursor)` harness branch for Anvil's Cursor Agent CLI, which is
+installed as `agent` rather than `cursor`:
+
+```sh
+agent --trust --yolo --print --output-format stream-json \
+  --model "$MODEL" --workspace "$PROBLEM_DIR" "$PROMPT"
+```
+
+`scripts/extract_usage.py` now has `_cursor()` support for terminal
+`{"type":"result"}` events with `usage.inputTokens`, `outputTokens`,
+`cacheReadTokens`, and `cacheWriteTokens`. Partial Cursor timeouts do not expose
+a terminal usage block, so usage may be null on 300s smokes that hit timeout.
+
+Composer 2.5 smoke:
+
+```text
+BUDGET_SECONDS=300
+problem: problems/01_fp8_gemm
+harness/model: cursor / composer-2.5
+archive: outputs/runs/20260522_144839_cursor_composer-2.5_01_fp8_gemm/
+```
+
+The run wrote `solution.py` and preserved source problem cleanliness, but timed
+out and failed post-run `check.py`: the generated solution tried to load a
+Torch extension named `cutlass_fp8_gemm`, but the `.so` was missing at
+post-check import time. This is a real model/harness smoke result, not a
+workspace collision.
+
+Validation after the harness changes:
+
+```sh
+uv run ruff check . --fix
+uv run pytest
+```
+
+Both passed.
+
+### GPU queue smoke
+
+Added per-run cache directories and a shared GPU lock wrapper under each
+archive's `bin/` directory. During a run, `PATH` points at wrappers for `uv`,
+`python`, `python3`, `nvidia-smi`, `ncu`, `nsys`, and `nvcc`; those wrappers
+acquire `outputs/gpu.lock` before forwarding to the real binary. Per-run cache
+env vars are also set:
+
+```sh
+TORCH_EXTENSIONS_DIR="$RUN_DIR/cache/torch_extensions"
+TRITON_CACHE_DIR="$RUN_DIR/cache/triton"
+CUDA_CACHE_PATH="$RUN_DIR/cache/cuda"
+TMPDIR="$RUN_DIR/tmp"
+```
+
+Smoke test launched three agents concurrently on `01_fp8_gemm` with
+`BUDGET_SECONDS=180`:
+
+- `opencode openrouter-alibaba/qwen/qwen3.7-max`
+- `opencode openrouter-google-ai-studio/google/gemini-3.5-flash`
+- `cursor composer-2.5`
+
+All three reached post-run validation without touching the source problem
+directory. The lock logs showed serialized GPU-facing calls. In particular,
+Gemini's `check.py` ran first (`16:01:07` to `16:01:09`), Cursor's `check.py`
+then ran (`16:01:09` to `16:01:35`), and Qwen's `check.py` then ran
+(`16:01:35` to `16:01:38`). This validates the intended shape: agent work can
+overlap, but check/compile/benchmark phases queue through the shared lock.
+
+The 180s model results are not capability scores:
+
+- Gemini wrote a solution but failed tolerance (`max_abs_diff=0.5625`).
+- Qwen wrote a Triton solution but failed compile (`Unsupported rhs dtype fp8e4nv`).
+- Composer wrote a CUTLASS solution but failed extension build.
+
+Important limitation: the lock only governs commands launched inside the
+KernelBench harness. It does not stop unrelated machine-wide CUDA jobs already
+running elsewhere on Anvil, so serious published sweeps should still check
+`overnight-compute status` / `nvidia-smi` first or run under a broader machine
+reservation.
+
+First wrapper attempt deadlocked during a follow-up Qwen run: `uv run python
+benchmark.py` held the GPU lock, then the benchmark's child `nvcc --version`
+wrapper tried to acquire the same non-reentrant lock. Fixed by setting
+`KBH_GPU_LOCK_HELD=1` while executing the real locked command; nested wrapper
+calls now bypass the lock and exec the real binary directly.
+
+Validation after the reentrant fix:
+
+```text
+BUDGET_SECONDS=300
+harness/model: opencode / openrouter-alibaba/qwen/qwen3.7-max
+archive: outputs/runs/20260522_161511_opencode_openrouter-alibaba_qwen_qwen3.7-max_01_fp8_gemm
+```
+
+Result: `correct=true`, `peak_fraction=0.4257`, `template_mutated=false`.
+The lock log shows the full post-run path serialized cleanly:
+
+```text
+16:20:11 start uv run python check.py
+16:20:17 end   uv run python check.py status=0
+16:20:17 start uv run python benchmark.py
+16:20:26 end   uv run python benchmark.py status=0
+```
+
+---
+
+## 2026-05-21 - Gemini CLI smoke wired, timeout path validated
+
+Gemini CLI support is now wired into the Hard harness but remains uncommitted.
+`scripts/run_hard.sh` has a `gemini)` branch that runs from inside the problem
+directory because Gemini has no `--cwd` or `--add-dir` flag:
+
+```sh
+cd "$PROBLEM_DIR" && gemini -m "$MODEL" --approval-mode yolo -o stream-json -p "$PROMPT"
+```
+
+The Gemini branch was added to the `session_complete` group by looking for a
+terminal result event shaped like `{"type":"result"}`. `scripts/extract_usage.py`
+now has `_gemini()` support that reads `stats.input_tokens`,
+`stats.output_tokens`, and cached-token stats from that terminal result event.
+
+Smoke run:
+
+```text
+BUDGET_SECONDS=300
+problem: problems/01_fp8_gemm
+harness/model: gemini / gemini-3.5-flash
+archive: outputs/runs/20260519_212055_gemini_gemini-3.5-flash_01_fp8_gemm/
+```
+
+The smoke passed end-to-end at the harness level: Gemini wrote a Triton GEMM
+`solution.py` and executed `check.py` inside the sandbox. The run timed out at
+300 seconds with exit 124, so `session_complete=false`; this is expected for
+the smoke budget, and because there was no final result event, usage stayed
+null.
+
+The important validation was the reward-hack defense. Gemini tried to edit
+`problem.yaml` to add a `bfloat16: 0.15` tolerance after its FP8 kernel failed
+the atol check (`max_abs_diff=0.546875`). The template-mutation guard detected
+`template_mutated: true`, restored `problem.yaml`, and marked the run INVALID.
+That is the intended defense working. Workspace isolation also held: Gemini was
+restricted to `PROBLEM_DIR` plus `~/.gemini/tmp/...`, matching the other
+harnesses sandbox model.
+
+Harness is ready for a real 45-minute sweep when requested. Before publishing
+or merging this work, run normal checks and commit the two dirty harness files:
+
+- `scripts/run_hard.sh`
+- `scripts/extract_usage.py`
+
+
 ## 2026-05-14 - Leaderboard split after non-pass audit
 
 After a per-run audit of every non-pass cell, `/hard` now renders two leaderboard sections instead of one flat table. The serious comparison section keeps rows where audited non-passes are normal benchmark outcomes: correctness failures, build failures, full 2700s timeouts, or explicit invalid/reward-hack behavior. Current serious rows are GPT-5.5, Claude Opus 4.7, Claude Code GLM-5.1 on Z.ai, Droid GLM-5.1, and the two DeepSeek OpenCode rows.
@@ -545,6 +806,56 @@ Kept: one-line hardware identifier in a parenthetical (`SM120 Blackwell, GDDR7, 
 
 ---
 
+## 2026-05-23 — Parallel sweep logging and queue-safe launch
+
+The reliable parallel mode is `KBH_DISABLE_AGENT_CUDA=1`: hide CUDA from
+OpenCode/Cursor agent phases, then let `scripts/run_hard.sh` own `check.py` and
+`benchmark.py` under `outputs/gpu.lock`. This avoids the failure mode where an
+agent bypasses PATH wrappers by calling an absolute `.venv/bin/python3`.
+The first full launch at `kbh_hard_parallel_20260523_002720` proved the extra
+guard was necessary: Cursor set `REAL_UV=$(which uv)` after the wrapper had
+entered `PATH`, recursively invoking the wrapper, while several absolute
+`.venv/bin/python3` children touched CUDA outside the lock. That sweep was
+terminated before result collection. The harness now keeps fallback real binary
+paths and injects an agent-phase `sitecustomize.py` guard so torch CUDA probes
+fail fast during generation; harness-owned validation still runs without the
+agent guard.
+
+`result.json` now records `run_id`, `run_group`, ISO and epoch timestamps,
+harness-only wall time, total wall time, check/benchmark wall time, queue mode,
+agent CUDA visibility, and normalized usage fields. `scripts/summarize_runs.py`
+flattens `outputs/runs/*/result.json` into JSON/CSV summaries for website import.
+`scripts/launch_parallel_sweep.sh` writes a manifest under
+`outputs/sweeps/<run_group>/manifest.tsv` and starts the model/problem matrix in
+parallel.
+
+Verification before launch:
+
+```bash
+bash -n scripts/run_hard.sh
+bash -n scripts/launch_parallel_sweep.sh
+uv run ruff check . --fix
+uv run pytest
+uv run python scripts/summarize_runs.py --output-dir outputs/summaries/smoke_latest
+```
+
+Result: 10 tests passed; summarizer wrote 167 historical rows.
+
+Clean guarded sweep launched after the failed first attempt:
+
+```bash
+KBH_RUN_GROUP=kbh_hard_parallel_guarded_20260523_003820 \
+KBH_DISABLE_AGENT_CUDA=1 \
+./scripts/launch_parallel_sweep.sh
+```
+
+Manifest:
+`outputs/sweeps/kbh_hard_parallel_guarded_20260523_003820/manifest.tsv`.
+Early verification showed no agent-phase CUDA apps, one GPU compute process at
+a time under `outputs/gpu.lock.owner`, and result rows carrying the new timing,
+usage, and queue metadata. Interim summaries are written to
+`outputs/sweeps/kbh_hard_parallel_guarded_20260523_003820/summary/`.
+
 ## 2026-04-26 — TopK overnight sweep: forensic findings
 
 **Setup.** 7 models × 1 problem (05_topk_bitonic), sequential, 45-min budget each. `regime: memory`, scored against 1.8 TB/s GDDR7 peak. Geomean over 5 shapes.
@@ -603,6 +914,49 @@ Warmup of 5 was too short for Triton autotune (~7 configs) plus `torch.compile(r
 **Local rust codex binary had a stale alias.** `npm install -g @openai/codex` gives 0.125.0 with `gpt-5.5` support; the local rust binary was 0.118.0 and rejected the model name. Non-interactive shells don't see the alias, so `which codex` was lying. Force PATH to npm bin.
 
 ---
+
+## 2026-05-23 - Infra failure classification and safer resweep controls
+
+Added explicit failure classification to `scripts/run_hard.sh`:
+`pass`, `template_mutated`, `provider_rate_limited`, `timeout`,
+`incomplete_session`, `provider_early_stop`, `no_solution`, `check_failed`,
+`benchmark_failed`, and `harness_error`. Each `result.json` now carries
+`failure_reason`, `retryable_infra_failure`, and
+`minimum_useful_output_tokens` so the website can distinguish a bad kernel from
+an API/quota/no-output event. The default minimum useful output threshold is
+5,000 tokens for no-solution kernel attempts.
+
+Added `scripts/preflight_harnesses.sh` for cheap auth/model-route checks before
+paid sweeps, and `scripts/launch_infra_retries.sh` to rerun only rows whose
+latest result is retryable infrastructure failure. `scripts/summarize_runs.py`
+now flattens the new fields into summary JSON/CSV.
+
+OpenRouter can pass a tiny preflight while still lacking enough balance for the
+full KernelBench prompt. When `/api/v1/credits` shows usage at or above credits,
+run non-OpenRouter rows with
+`KBH_SKIP_OPENROUTER=1 KBH_USE_DIRECT_GEMINI=1`; this keeps Gemini running via
+the Gemini API key and leaves Qwen pending until OpenRouter is topped up or a
+direct Alibaba/Qwen key exists.
+
+The guarded full-sweep launcher still uses archive-local workspaces and the GPU
+lock, but now defaults to `KBH_HARNESS_CONCURRENCY=2` per harness/provider
+path. Claude Code runs also pass `--settings
+'{"fastMode":false,"alwaysThinkingEnabled":true}'` explicitly; Anvil's global
+Claude setting was already `fastMode=false`, and previous Opus result metadata
+also reported `fast_mode_state: off`, but this makes the benchmark setting
+durable.
+
+During the classified resweep, `scripts/launch_infra_retries.sh` initially
+emitted tab-separated retry keys. Bash treated the empty effort field as
+collapsible whitespace, shifted the problem into the effort column, and launched
+blank-problem retry manifest rows. Fixed by using `|` as the retry key delimiter
+and normalizing summary problem names back to `problems/<name>` before calling
+`run_hard.sh`.
+
+IVA / voice bridge jobs on Anvil have higher priority than KernelBench sweeps.
+Do not kill IVA just to make `nvidia-smi` empty. The KernelBench harness should
+remain lower priority; if an unrelated IVA CUDA context or CPU workload is
+present, leave it alone and report it as concurrent machine state.
 
 ## 2026-04-24 — Provider pinning + caching wisdom
 
