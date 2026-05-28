@@ -52,6 +52,8 @@ manifest_append() {
     flock "$MANIFEST.lock" printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >> "$MANIFEST"
 }
 
+LAST_LAUNCH_PID=""
+
 launch_one() {
     local name="$1"
     local harness="$2"
@@ -74,10 +76,9 @@ launch_one() {
         export BUDGET_SECONDS="$BUDGET_SECONDS"
         "${cmd[@]}"
     ) > "$log" 2>&1 &
-    pid=$!
+    LAST_LAUNCH_PID=$!
     manifest_append "$RUN_GROUP" "$name" "$harness" "$model" "$effort" "$problem" \
-        "$BUDGET_SECONDS" "$pid" "${log#$REPO_ROOT/}"
-    echo "$pid"
+        "$BUDGET_SECONDS" "$LAST_LAUNCH_PID" "${log#$REPO_ROOT/}"
 }
 
 wait_for_local_slot() {
@@ -90,6 +91,8 @@ wait_for_local_slot() {
         for pid in "${active_ref[@]}"; do
             if kill -0 "$pid" 2>/dev/null; then
                 kept+=("$pid")
+            else
+                wait "$pid" 2>/dev/null || true
             fi
         done
         active_ref=("${kept[@]}")
@@ -112,9 +115,14 @@ run_harness_worker() {
                 continue
             fi
             wait_for_local_slot active_pids
-            pid="$(launch_one "$name" "$harness" "$model" "$effort" "$problem")"
+            launch_one "$name" "$harness" "$model" "$effort" "$problem"
+            pid="$LAST_LAUNCH_PID"
             active_pids+=("$pid")
         done
+    done
+
+    for pid in "${active_pids[@]}"; do
+        wait "$pid" || true
     done
 }
 

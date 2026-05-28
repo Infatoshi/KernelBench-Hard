@@ -2,6 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN_HARD = ROOT / "scripts" / "run_hard.sh"
+LAUNCH_PARALLEL = ROOT / "scripts" / "launch_parallel_sweep.sh"
 
 
 def test_post_run_timeout_starts_inside_gpu_lock() -> None:
@@ -45,3 +46,12 @@ def test_grok_uses_headless_cli_and_end_marker() -> None:
     assert '--cwd "$PROBLEM_DIR"' in block
     assert "--output-format streaming-json" in block
     assert '"type":"end"' in script
+
+
+def test_parallel_launcher_keeps_run_hard_jobs_waitable() -> None:
+    script = LAUNCH_PARALLEL.read_text()
+    assert 'LAST_LAUNCH_PID=$!' in script
+    assert 'pid="$(launch_one' not in script
+    assert 'launch_one "$name" "$harness" "$model" "$effort" "$problem"' in script
+    assert 'pid="$LAST_LAUNCH_PID"' in script
+    assert 'wait "$pid" || true' in script
