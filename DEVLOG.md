@@ -4,6 +4,15 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-06-01 - Removed Kahan softmax from the active deck
+
+`04_kahan_softmax` has been removed from the benchmark surface. The problem was
+too easy to satisfy with a plain fast softmax under the existing tolerance, so
+it rewarded the shortcut instead of forcing compensated summation. Current
+scripts, machine-readable results, baselines, annotations, and leaderboard docs
+no longer include it. Historical DEVLOG discussion is intentionally preserved
+below as audit context for why the problem was removed.
+
 ## 2026-06-01 - Benchmark scoring is solution-first by default
 
 KDA exposed a general harness risk: reference diagnostics can be slower than the

@@ -35,7 +35,7 @@ cleanup() {
 trap cleanup EXIT
 
 declare -a problems=(
-    01_fp8_gemm 02_kda_cutlass 03_paged_attention 04_kahan_softmax
+    01_fp8_gemm 02_kda_cutlass 03_paged_attention
     05_topk_bitonic 06_sonic_moe_swiglu 07_w4a16_gemm
 )
 

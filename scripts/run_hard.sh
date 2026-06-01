@@ -791,7 +791,7 @@ if [ "$TEMPLATE_MUTATED" = "false" ] && [ "$HAS_SOLUTION" = "true" ]; then
     elif grep -q "^PASS" "$CHECK_LOG"; then
         CORRECT=true
         echo "Running benchmark.py..."
-        # Some problems (KDA chunked recurrence, large-vocab softmax, sonic-MoE)
+        # Some problems (KDA chunked recurrence, sonic-MoE)
         # have references that loop in Python, so 20 perf trials × 4 variants ×
         # 5 shapes can take 5-10 min. Generous budget.
         BENCH_START_TIME=$(date +%s)

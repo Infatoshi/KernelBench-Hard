@@ -30,7 +30,7 @@ score = achieved_TFLOPS / peak_TFLOPS_for_precision
 ```
 where `peak_TFLOPS_for_precision` is looked up from `src/hardware/rtx_pro_6000.py` (e.g., ~200 BF16, ~400 FP8, ~800 FP4 TFLOPS dense on SM120).
 
-**Memory-bound problems** (softmax, layernorm, topk, W4A16 decode):
+**Memory-bound problems** (layernorm, topk, W4A16 decode):
 ```
 score = achieved_GB/s / peak_HBM_bandwidth
 ```
