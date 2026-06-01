@@ -51,12 +51,16 @@ transcript, and those quotes are not provider failures.
 Provider credit/rate detection must read explicit CLI/API error events and
 stderr only, not arbitrary assistant text or tool outputs; models can read
 AGENTS.md, `run_hard.sh`, and old artifacts containing those trigger words.
-When `KBH_DISABLE_AGENT_CUDA=1`, agent-phase `uv`/`python`/`python3` probes
-bypass the lock because CUDA is hidden and guarded; harness-owned
+When `KBH_DISABLE_AGENT_CUDA=1`, agent-phase `uv`/`python`/`python3`,
+`nvidia-smi`, and `nvcc` probes bypass the lock because CUDA is hidden and
+guarded or the probe is harmless; `ncu` and `nsys` fail fast. Harness-owned
 `check.py`/`benchmark.py` still lock normally.
 The `check.py`/`benchmark.py` execution timeout must start after the GPU lock is
 acquired. Use `run_gpu_locked_timeout`; do not wrap `timeout` outside `uv run`
 or queued rows can fail while merely waiting for `outputs/gpu.lock`.
+`benchmark.py` must score `variant=solution` first. Eager / compiled / SOTA
+reference diagnostics are opt-in via `KBH_BENCHMARK_BASELINES=1` (or a
+per-problem alias) and emit `benchmark_event` start/end/error lines for audits.
 Transcript usage extraction also bypasses the lock; it is CPU-only post-processing.
 
 Before expensive sweeps, check:

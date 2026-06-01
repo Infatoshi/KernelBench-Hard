@@ -35,7 +35,7 @@ KernelBench-Hard/
 │       ├── shapes.py          canonical shape list (read by check.py / benchmark.py)
 │       ├── problem.yaml       metadata (flops, bytes, tolerance, forbidden ops)
 │       ├── check.py           correctness runner (per-dtype atol)
-│       ├── benchmark.py       roofline measurement: eager, compiled, sota, solution
+│       ├── benchmark.py       roofline measurement: solution; optional eager/compiled/sota
 │       ├── PROMPT.txt         human-voice query sent to the agent under test
 │       └── solution.py        agent output (gitignored)
 ├── src/
@@ -122,10 +122,14 @@ Provider-credit detection must stay credit-specific; do not match plain
 Provider credit/rate classifications should only apply to rows without a
 solution; successful sessions may quote old run logs or result JSON in the
 transcript, and those quotes are not provider failures.
-When `KBH_DISABLE_AGENT_CUDA=1`, agent-phase `uv`/`python`/`python3` probes
-bypass the lock because CUDA is hidden and guarded; harness-owned
+When `KBH_DISABLE_AGENT_CUDA=1`, agent-phase `uv`/`python`/`python3`,
+`nvidia-smi`, and `nvcc` probes bypass the lock because CUDA is hidden and
+guarded or the probe is harmless; `ncu` and `nsys` fail fast. Harness-owned
 `check.py`/`benchmark.py` still lock normally.
 Transcript usage extraction also bypasses the lock; it is CPU-only post-processing.
+`benchmark.py` must score `variant=solution` first. Eager / compiled / SOTA
+reference diagnostics are opt-in via `KBH_BENCHMARK_BASELINES=1` (or a
+per-problem alias) and emit `benchmark_event` start/end/error lines for audits.
 
 For broad sweeps, `scripts/launch_parallel_sweep.sh` defaults to
 `KBH_HARNESS_CONCURRENCY=2`, meaning each harness/provider path can have at

@@ -106,8 +106,8 @@ if [ "${KBH_DISABLE_AGENT_CUDA:-0}" = "1" ]; then
 
 Parallel sweep note: CUDA is intentionally unavailable during your editing
 phase so many models can work at once without contaminating GPU timings. Do not
-spend time running check.py, benchmark.py, nvidia-smi, ncu, nsys, nvcc, or CUDA
-profiling commands. Focus on writing the best final solution.py you can. The
+spend time running check.py, benchmark.py, ncu, nsys, or CUDA profiling
+commands. Focus on writing the best final solution.py you can. The
 harness will run check.py and benchmark.py after your session under the GPU
 lock and archive those logs."
 fi
@@ -317,8 +317,12 @@ if [ "${KBH_GPU_LOCK_HELD:-0}" = "1" ]; then
 fi
 if [ "${KBH_AGENT_PHASE:-0}" = "1" ]; then
     case "$name" in
-        uv|python|python3)
+        uv|python|python3|nvidia-smi|nvcc)
             exec "$real" "$@"
+            ;;
+        ncu|nsys)
+            echo "$name is disabled during KernelBench parallel agent phase; official benchmarking runs under the GPU lock after generation." >&2
+            exit 125
             ;;
     esac
 fi
