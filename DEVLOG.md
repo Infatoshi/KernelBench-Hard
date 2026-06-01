@@ -4,6 +4,95 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-06-01 - MiniMax M3 Claude Code full sweep
+
+Full CUDA-track sweep through the direct Claude Code route:
+
+```text
+kbh_minimax_m3_claude_full_20260601_105827
+```
+
+MiniMax M3 produced correct solutions on all seven problems. Six benchmarked
+successfully; `02_kda_cutlass` passed correctness but its benchmark hit the
+1800s benchmark timeout. Published row:
+
+```text
+01_fp8_gemm          0.5334
+02_kda_cutlass       PASS, benchmark_timeout
+03_paged_attention   0.0286
+04_kahan_softmax     0.2364
+05_topk_bitonic      0.0433
+06_sonic_moe_swiglu  0.2538
+07_w4a16_gemm        0.1076
+```
+
+The run is a big delta from the previous OpenCode MiniMax M3 free route, which
+wrote no solutions. Claude Code route quality matters here.
+
+Audit notes: the FP8 GEMM cell uses the known bf16-reference loophole (explicit
+fp8-to-bf16 cast plus CUTLASS Sm80 bf16 GEMM), and the Kahan softmax cell is a
+fast fp32 tree-sum softmax rather than compensated Kahan. Both are annotated as
+rubric leaks. The TopK and Sonic MoE cells are clean/interesting: TopK uses CUB
+BlockRadixSort with striped loads and a hierarchical k=64 single-row merge;
+Sonic MoE directly implements grouped GEMM with fused SwiGLU and becomes the
+new best cell on that problem.
+
+---
+
+## 2026-06-01 - MiniMax M3 Claude Code direct route
+
+MiniMax's current docs now explicitly support Claude Code through the
+Anthropic-compatible endpoint `https://api.minimax.io/anthropic` with model
+`MiniMax-M3`. Added a dedicated `minimax-claude` harness instead of mutating the
+normal `claude` harness or global `~/.claude/settings.json`.
+
+Auth convention:
+
+```sh
+export MINIMAX_API_KEY=...
+```
+
+Keep that in Anvil's `~/.env_vars`, which `scripts/run_hard.sh` and
+`scripts/preflight_harnesses.sh` already source. The harness maps it to
+`ANTHROPIC_AUTH_TOKEN` only inside the spawned Claude Code process and sets
+`ANTHROPIC_MODEL` plus the Sonnet/Opus/Haiku defaults to `MiniMax-M3`.
+The key is exported inside the launch subshell before `timeout claude`; do not
+use `timeout env ANTHROPIC_AUTH_TOKEN=...` because `env` arguments appear in
+process listings while a run is active.
+
+Use:
+
+```sh
+KBH_USE_MINIMAX_M3_CLAUDE=1 ./scripts/preflight_harnesses.sh
+./scripts/run_hard.sh minimax-claude MiniMax-M3 problems/01_fp8_gemm
+```
+
+---
+
+## 2026-05-31 - MiniMax M3 free sweep and provider classifier hardening
+
+Swept MiniMax M3 through the opencode harness using the available public Zen
+route `opencode-zen-live/minimax-m3-free` because Anvil has no saved OpenCode
+Go credentials. Run group:
+
+```text
+kbh_minimax_m3_opencode_20260531_183925
+```
+
+All seven rows completed with `session_complete=true` and `harness_exit_code=0`
+but wrote no `solution.py`; no `check.py` or `benchmark.py` validation ran.
+The corrected result is therefore 0/7, all `no_solution`.
+
+The first summary falsely labeled `01_fp8_gemm` as
+`provider_rate_limited` and `06_sonic_moe_swiglu` as
+`provider_insufficient_credits`. Both were transcript false positives: the
+model had read text containing "quota/rate limits" from `AGENTS.md` and
+`insufficient_credits` from `run_hard.sh`. Provider classification now lives in
+`src/harness/classification.py` and scans explicit CLI/API error events plus
+stderr, not arbitrary assistant text or tool outputs.
+
+---
+
 ## 2026-05-28 - Opus 4.8 and Grok Build addendum
 
 Added Anvil `grok` CLI support using model `grok-build` and the top-level
