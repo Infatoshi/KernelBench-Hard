@@ -1,6 +1,6 @@
 # KernelBench-Hard — Developer Instructions
 
-Last updated: 2026-05-22.
+Last updated: 2026-06-02.
 
 This file is for **coding agents editing the repo** (you, via Claude Code). Do not confuse with `problems/<X>/PROMPT.txt` — those are the human-voice queries fed to agents _under test_.
 
@@ -17,9 +17,10 @@ See [SPEC.md](./SPEC.md) for methodology. See [README.md](./README.md) for the m
 - **uv only.** No bare `python`, no `pip`. Use `uv run ...`, `uv add ...`, `uv pip install ...`.
 - **Before committing:** `uv run ruff check . --fix && uv run pytest`.
 - **Never edit `problems/*/solution.py`**. Those files are agent output; they're gitignored for a reason. If you need to inspect one, read it from `outputs/runs/<run>/<problem>/solution.py`.
-- **Never modify `problems/*/reference.py`, `check.py`, `benchmark.py`, `problem.yaml`, `shapes.py`, or `PROMPT.txt`** once a sweep has been published. Those define the benchmark — changing them invalidates prior results. `scripts/run_hard.sh` snapshots these files and marks the run invalid if an agent changes them.
+- **Never modify `problems/*/reference.py`, `check.py`, `benchmark.py`, `problem.yaml`, `shapes.py`, or `PROMPT.txt`** once a sweep has been published unless you are intentionally versioning the benchmark/validation surface. Those files define the benchmark. `scripts/run_hard.sh` snapshots them and marks the run invalid if an agent under test changes them.
 - **torch.compile fix.** torch 2.11.0+cu130 has a broken inductor CSE typing annotation that breaks the compile baseline. Run `./scripts/patch_torch.sh` after every `uv sync`.
 - **GPU work must go through `scripts/run_hard.sh`.** It creates archive-local workspaces, isolated CUDA/Triton/Torch caches, and a shared GPU lock so concurrent agent sweeps can edit in parallel while compile/check/benchmark work queues cleanly.
+- **Correctness now includes numeric stress.** `check.py` reruns canonical shapes/seeds under problem-specific small/large activation or weight scales via `src/eval/numeric_stress.py`. This hardens correctness against zero-output, cached-nominal, and loose-tolerance cheats. `benchmark.py` still measures only the canonical performance deck.
 
 ## Repo layout
 
@@ -40,7 +41,7 @@ KernelBench-Hard/
 │       └── solution.py        agent output (gitignored)
 ├── src/
 │   ├── harness/               claude.py, codex.py, kimi.py, ccr_router.py
-│   ├── eval/                  correctness.py, roofline.py, shapes.py, report.py
+│   ├── eval/                  correctness.py, numeric_stress.py, roofline.py, shapes.py, report.py
 │   ├── hardware/              rtx_pro_6000.py, m4_max.py — peak lookup
 │   └── sandbox/               local.py, metal.py
 ├── scripts/
@@ -83,6 +84,23 @@ done
 # Everything (this is what sweep.sh does)
 ./scripts/sweep.sh
 ```
+
+### Correctness validation
+
+The correctness gate is stricter than the performance gate. `check.py` first
+validates nominal canonical shapes/seeds, then reruns the same shapes/seeds
+under problem-specific numeric stress cases from `src/eval/numeric_stress.py`.
+Stress cases only rescale existing floating inputs or model state; they do not
+add hidden shapes. Integer/discrete outputs are exact, while floating outputs
+use explicit per-dtype tolerances and report max absolute/relative error, bad
+element count, worst index, and tolerance on failure.
+
+`KBH_NUMERIC_STRESS=0` disables stress cases for local debugging only. Do not
+use it for official checks, sweeps, or published result backfills.
+
+The performance score remains comparable across the canonical deck:
+`benchmark.py` does not import numeric stress and still times the submitted
+solution on the normal benchmark inputs.
 
 ### Concurrent sweeps and GPU isolation
 
@@ -242,8 +260,11 @@ Keep `tests/` minimal. We test:
 - `src/hardware/` peak-value lookup
 - `src/eval/roofline.py` throughput math
 - `src/eval/correctness.py` per-dtype tolerance enforcement
+- `src/eval/numeric_stress.py` against classic zero-output, cached-nominal, and
+  parameter-scale restoration cases
 
-We do **not** test problem files directly — those are validated by running a real agent against them.
+We do **not** test full problem files directly — those are validated by running
+a real agent or a disposable smoke workspace against them.
 
 ```bash
 uv run pytest

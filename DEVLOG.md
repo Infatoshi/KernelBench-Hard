@@ -4,6 +4,40 @@ A running record of decisions, dead ends, and lessons. Newest entries on top. Th
 
 ---
 
+## 2026-06-02 - Numeric stress correctness validation
+
+Correctness now reruns canonical shapes and seeds under problem-specific numeric
+stress cases. This is not hidden-shape bloat: stress cases rescale existing
+floating inputs or model state to catch zero-output, cached-nominal, and
+loose-tolerance solutions that can pass under one friendly random distribution.
+`benchmark.py` remains canonical-deck only, so measured peak fractions stay
+comparable for kernels that still pass.
+
+Implemented:
+
+- Added `src/eval/numeric_stress.py` with nominal plus targeted small/large
+  activation or weight-scale cases for the active hard problems.
+- Wired numeric stress into the active `check.py` runners.
+- Kept integer/discrete comparison exact and improved float failure diagnostics
+  with max absolute/relative error, bad element count, worst index, and
+  tolerance.
+- Added tests for classic cheat/failure classes: zero output under loose
+  tolerance, cached nominal answers, and state scaling/restoration.
+
+Verification:
+
+```text
+uv run ruff check . --fix
+uv run pytest                         # 31 passed
+KBH_NUMERIC_STRESS=1 check.py TopK    # disposable GPU smoke: PASS
+KBH_NUMERIC_STRESS=1 check.py FP8     # tiny disposable GPU smoke: PASS
+```
+
+Operational note: `KBH_NUMERIC_STRESS=0` is useful for local debugging only.
+Do not use it for official checks, sweeps, or published backfills.
+
+---
+
 ## 2026-06-01 - Removed Kahan softmax from the active deck
 
 `04_kahan_softmax` has been removed from the benchmark surface. The problem was

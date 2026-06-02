@@ -9,10 +9,11 @@ Summary of the non-negotiables:
 - **uv only.** `uv run ...`, `uv add ...`, `uv pip install ...`. Never `pip` or bare `python`.
 - **Before committing:** `uv run ruff check . --fix && uv run pytest`.
 - **Do not edit `problems/*/solution.py`** — those are agent output.
-- **Do not modify `reference.py`, `check.py`, `benchmark.py`, `problem.yaml`, `shapes.py`, or `PROMPT.txt`** of an already-published problem; `scripts/run_hard.sh` invalidates and restores runs that change them.
+- **Do not modify `reference.py`, `check.py`, `benchmark.py`, `problem.yaml`, `shapes.py`, or `PROMPT.txt`** of an already-published problem unless intentionally versioning the benchmark/validation surface; `scripts/run_hard.sh` invalidates and restores runs where agents under test change them.
 - **Apply the torch 2.11 inductor CSE hotfix** via `./scripts/patch_torch.sh` after any `uv sync`.
 - **Z.ai GLM-5.1 Claude Code reruns:** use `zai-claude`; `scripts/run_hard.sh` sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`, `CLAUDE_CODE_MAX_RETRIES=1000000`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000`, and routes all Claude Code aliases, including Haiku / Explore / subagents, to `glm-5.1`.
 - **GPU work must go through `scripts/run_hard.sh`.** It creates archive-local workspaces, isolated CUDA/Triton/Torch caches, and a shared GPU lock so concurrent agent sweeps can edit in parallel while compile/check/benchmark work queues cleanly.
+- **Correctness includes numeric stress.** `check.py` reruns canonical shapes/seeds under problem-specific small/large activation or weight scales via `src/eval/numeric_stress.py`; `benchmark.py` still measures only the canonical performance deck.
 
 ## Quick actions
 
@@ -62,6 +63,11 @@ or queued rows can fail while merely waiting for `outputs/gpu.lock`.
 reference diagnostics are opt-in via `KBH_BENCHMARK_BASELINES=1` (or a
 per-problem alias) and emit `benchmark_event` start/end/error lines for audits.
 Transcript usage extraction also bypasses the lock; it is CPU-only post-processing.
+`check.py` numeric stress is part of official correctness and should stay on.
+`KBH_NUMERIC_STRESS=0` is for local debugging only, not sweeps or published
+backfills. These stress cases do not add hidden shapes; they rescale existing
+floating inputs/state to catch zero-output, cached-nominal, and loose-tolerance
+cheats.
 
 Before expensive sweeps, check:
 
