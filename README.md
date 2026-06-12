@@ -1,3 +1,15 @@
+# KernelBench-Hard has moved
+
+Active development now lives in the unified monorepo:
+**https://github.com/Infatoshi/kernelbench.com/tree/master/benchmarks/hard**
+
+Leaderboard and writeups: **https://kernelbench.com**
+
+This repo is archived (read-only). Its code and full history were merged into
+the monorepo above.
+
+---
+
 # KernelBench-Hard
 
 Surgical GPU kernel benchmark. 6 active CUDA problems, frontier coding agents, roofline-based metric (achieved TFLOPS or GB/s vs hardware peak). Link-don't-spoil problem briefs: agents receive repo/paper URLs, not source snippets.
